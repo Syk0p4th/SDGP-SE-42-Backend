@@ -1,0 +1,221 @@
+# Booking Endpoints
+
+paths:
+  /bookings:
+    get:
+      tags:
+        - Bookings
+      summary: Get all bookings
+      description: Retrieve all bookings for the authenticated user
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [pending, confirmed, in-progress, completed, cancelled]
+          description: Filter by booking status
+        - in: query
+          name: startDate
+          schema:
+            type: string
+            format: date
+          description: Filter by start date
+        - in: query
+          name: endDate
+          schema:
+            type: string
+            format: date
+          description: Filter by end date
+      responses:
+        '200':
+          description: Bookings retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  count:
+                    type: integer
+                    example: 5
+                  bookings:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Booking'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    post:
+      tags:
+        - Bookings
+      summary: Create a new booking
+      description: Create a new booking for a car wash service
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - serviceId
+                - date
+                - time
+                - vehicleType
+              properties:
+                serviceId:
+                  type: string
+                  example: service-123
+                date:
+                  type: string
+                  format: date
+                  example: '2026-02-01'
+                time:
+                  type: string
+                  example: '10:00 AM'
+                vehicleType:
+                  type: string
+                  enum: [sedan, suv, truck, van, motorcycle]
+                  example: sedan
+                vehicleNumber:
+                  type: string
+                  example: ABC-1234
+                notes:
+                  type: string
+                  example: Please focus on the wheels
+      responses:
+        '201':
+          description: Booking created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Booking created successfully
+                  booking:
+                    $ref: '#/components/schemas/Booking'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /bookings/{id}:
+    get:
+      tags:
+        - Bookings
+      summary: Get booking by ID
+      description: Retrieve a specific booking by its ID
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Booking ID
+      responses:
+        '200':
+          description: Booking retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  booking:
+                    $ref: '#/components/schemas/Booking'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    patch:
+      tags:
+        - Bookings
+      summary: Update booking
+      description: Update booking details or status
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Booking ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [pending, confirmed, in-progress, completed, cancelled]
+                date:
+                  type: string
+                  format: date
+                time:
+                  type: string
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Booking updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Booking updated successfully
+                  booking:
+                    $ref: '#/components/schemas/Booking'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      tags:
+        - Bookings
+      summary: Cancel/Delete booking
+      description: Cancel or delete a booking
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Booking ID
+      responses:
+        '200':
+          description: Booking cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'

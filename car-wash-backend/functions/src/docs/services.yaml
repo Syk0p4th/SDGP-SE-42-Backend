@@ -1,0 +1,207 @@
+# Service Endpoints
+
+paths:
+  /services:
+    get:
+      tags:
+        - Services
+      summary: Get all services
+      description: Retrieve all available car wash services
+      security: []
+      parameters:
+        - in: query
+          name: category
+          schema:
+            type: string
+            enum: [wash, detail, maintenance, special]
+          description: Filter by service category
+        - in: query
+          name: isActive
+          schema:
+            type: boolean
+          description: Filter by active status
+      responses:
+        '200':
+          description: Services retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  count:
+                    type: integer
+                    example: 10
+                  services:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Service'
+
+    post:
+      tags:
+        - Services
+      summary: Create a new service
+      description: Create a new car wash service (Admin only)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - price
+                - duration
+              properties:
+                name:
+                  type: string
+                  example: Premium Wash & Wax
+                description:
+                  type: string
+                  example: Complete wash with premium wax coating
+                price:
+                  type: number
+                  format: float
+                  example: 49.99
+                duration:
+                  type: integer
+                  example: 60
+                category:
+                  type: string
+                  enum: [wash, detail, maintenance, special]
+                  example: wash
+      responses:
+        '201':
+          description: Service created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Service created successfully
+                  service:
+                    $ref: '#/components/schemas/Service'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /services/{id}:
+    get:
+      tags:
+        - Services
+      summary: Get service by ID
+      description: Retrieve a specific service by its ID
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Service ID
+      responses:
+        '200':
+          description: Service retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  service:
+                    $ref: '#/components/schemas/Service'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    patch:
+      tags:
+        - Services
+      summary: Update service
+      description: Update service details (Admin only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Service ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                price:
+                  type: number
+                  format: float
+                duration:
+                  type: integer
+                category:
+                  type: string
+                isActive:
+                  type: boolean
+      responses:
+        '200':
+          description: Service updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Service updated successfully
+                  service:
+                    $ref: '#/components/schemas/Service'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      tags:
+        - Services
+      summary: Delete service
+      description: Delete a service (Admin only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Service ID
+      responses:
+        '200':
+          description: Service deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
