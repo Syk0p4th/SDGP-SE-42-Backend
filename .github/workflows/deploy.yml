@@ -1,0 +1,103 @@
+name: Deploy to Firebase
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+
+jobs:
+  deploy:
+    name: Deploy Functions
+    runs-on: ubuntu-latest
+    
+    environment:
+      name: ${{ github.event.inputs.environment || 'production' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+          cache: 'npm'
+          cache-dependency-path: car-wash-backend/functions/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: car-wash-backend/functions
+        run: npm ci
+      
+      - name: Run tests
+        working-directory: car-wash-backend/functions
+        run: npm test
+        env:
+          NODE_ENV: test
+      
+      - name: Run linter
+        working-directory: car-wash-backend/functions
+        run: npm run lint
+      
+      - name: Setup Firebase CLI
+        run: npm install -g firebase-tools
+      
+      - name: Set Firebase environment variables
+        working-directory: car-wash-backend
+        run: |
+          firebase functions:config:set \
+            sentry.dsn="${{ secrets.SENTRY_DSN }}" \
+            app.environment="${{ github.event.inputs.environment || 'production' }}"
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      
+      - name: Deploy to Firebase
+        working-directory: car-wash-backend
+        run: firebase deploy --only functions --project ${{ secrets.FIREBASE_PROJECT_ID }}
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      
+      - name: Verify deployment
+        working-directory: car-wash-backend
+        run: |
+          echo "Deployment completed successfully!"
+          firebase functions:list --project ${{ secrets.FIREBASE_PROJECT_ID }}
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      
+      - name: Notify deployment success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'success',
+              context: 'Firebase Deployment',
+              description: 'Functions deployed successfully'
+            })
+      
+      - name: Notify deployment failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'failure',
+              context: 'Firebase Deployment',
+              description: 'Deployment failed'
+            })

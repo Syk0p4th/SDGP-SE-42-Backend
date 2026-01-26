@@ -1,0 +1,432 @@
+{
+    "info": {
+        "name": "Car Wash API",
+        "_postman_id": "car-wash-api-collection",
+        "description": "Complete API collection for Car Wash Backend",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "auth": {
+        "type": "bearer",
+        "bearer": [
+            {
+                "key": "token",
+                "value": "{{authToken}}",
+                "type": "string"
+            }
+        ]
+    },
+    "item": [
+        {
+            "name": "Authentication",
+            "item": [
+                {
+                    "name": "Register User",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "if (pm.response.code === 201) {",
+                                    "    const jsonData = pm.response.json();",
+                                    "    pm.environment.set('userId', jsonData.user.uid);",
+                                    "}"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "auth": {
+                            "type": "noauth"
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"email\": \"{{$randomEmail}}\",\n  \"password\": \"SecurePass123!\",\n  \"displayName\": \"{{$randomFullName}}\",\n  \"phoneNumber\": \"+1234567890\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/auth/register",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "auth",
+                                "register"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Login",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "if (pm.response.code === 200) {",
+                                    "    const jsonData = pm.response.json();",
+                                    "    pm.environment.set('authToken', jsonData.token);",
+                                    "    pm.environment.set('userId', jsonData.user.uid);",
+                                    "}"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "auth": {
+                            "type": "noauth"
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"SecurePass123!\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/auth/login",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "auth",
+                                "login"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get Profile",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/auth/profile",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "auth",
+                                "profile"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Logout",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/auth/logout",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "auth",
+                                "logout"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Services",
+            "item": [
+                {
+                    "name": "Get All Services",
+                    "request": {
+                        "auth": {
+                            "type": "noauth"
+                        },
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/services?category=wash",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "services"
+                            ],
+                            "query": [
+                                {
+                                    "key": "category",
+                                    "value": "wash",
+                                    "disabled": true
+                                },
+                                {
+                                    "key": "isActive",
+                                    "value": "true",
+                                    "disabled": true
+                                }
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get Service by ID",
+                    "request": {
+                        "auth": {
+                            "type": "noauth"
+                        },
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/services/{{serviceId}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "services",
+                                "{{serviceId}}"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Create Service",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "if (pm.response.code === 201) {",
+                                    "    const jsonData = pm.response.json();",
+                                    "    pm.environment.set('serviceId', jsonData.service.id);",
+                                    "}"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"name\": \"Premium Wash & Wax\",\n  \"description\": \"Complete exterior wash with premium wax coating\",\n  \"price\": 49.99,\n  \"duration\": 60,\n  \"category\": \"wash\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/services",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "services"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update Service",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"price\": 54.99,\n  \"isActive\": true\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/services/{{serviceId}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "services",
+                                "{{serviceId}}"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete Service",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/services/{{serviceId}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "services",
+                                "{{serviceId}}"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Bookings",
+            "item": [
+                {
+                    "name": "Get All Bookings",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/bookings?status=pending",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "bookings"
+                            ],
+                            "query": [
+                                {
+                                    "key": "status",
+                                    "value": "pending",
+                                    "disabled": true
+                                }
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Create Booking",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "if (pm.response.code === 201) {",
+                                    "    const jsonData = pm.response.json();",
+                                    "    pm.environment.set('bookingId', jsonData.booking.id);",
+                                    "}"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"serviceId\": \"{{serviceId}}\",\n  \"date\": \"2026-02-01\",\n  \"time\": \"10:00 AM\",\n  \"vehicleType\": \"sedan\",\n  \"vehicleNumber\": \"ABC-1234\",\n  \"notes\": \"Please focus on the wheels\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/bookings",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "bookings"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get Booking by ID",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/bookings/{{bookingId}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "bookings",
+                                "{{bookingId}}"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update Booking",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"status\": \"confirmed\",\n  \"notes\": \"Updated notes\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/bookings/{{bookingId}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "bookings",
+                                "{{bookingId}}"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Cancel Booking",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/bookings/{{bookingId}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "bookings",
+                                "{{bookingId}}"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        }
+    ],
+    "variable": [
+        {
+            "key": "baseUrl",
+            "value": "http://localhost:5001/car-wash-app/us-central1/api",
+            "type": "string"
+        }
+    ]
+}

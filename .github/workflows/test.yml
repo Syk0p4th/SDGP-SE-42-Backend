@@ -1,0 +1,92 @@
+name: Test and Lint
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          cache-dependency-path: car-wash-backend/functions/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: car-wash-backend/functions
+        run: npm ci
+      
+      - name: Run linter
+        working-directory: car-wash-backend/functions
+        run: npm run lint
+      
+      - name: Run tests
+        working-directory: car-wash-backend/functions
+        run: npm test
+        env:
+          NODE_ENV: test
+      
+      - name: Upload coverage reports
+        if: matrix.node-version == '18.x'
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./car-wash-backend/functions/coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+      
+      - name: Archive test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-node-${{ matrix.node-version }}
+          path: |
+            car-wash-backend/functions/coverage/
+            car-wash-backend/functions/logs/
+          retention-days: 30
+
+  lint:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+          cache: 'npm'
+          cache-dependency-path: car-wash-backend/functions/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: car-wash-backend/functions
+        run: npm ci
+      
+      - name: Run ESLint
+        working-directory: car-wash-backend/functions
+        run: npm run lint
+      
+      - name: Check for console statements
+        working-directory: car-wash-backend/functions
+        run: |
+          if grep -r "console\\.log" src/ --exclude-dir=node_modules; then
+            echo "Found console.log statements in source code"
+            exit 1
+          fi
+        continue-on-error: true
