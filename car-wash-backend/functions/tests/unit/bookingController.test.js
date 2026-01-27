@@ -5,9 +5,9 @@ const {
   createMockNext,
   createMockBooking,
   createMockCollectionRef
-} = require('../../helpers/testUtils');
+} = require('../helpers/testUtils');
 
-jest.mock('../../../src/config/logger');
+jest.mock('../../src/config/logger');
 
 describe('Booking Controller - Unit Tests', () => {
   let bookingController;
@@ -24,7 +24,7 @@ describe('Booking Controller - Unit Tests', () => {
       firestore: () => mockDb
     }));
 
-    bookingController = require('../../../src/controllers/bookingController');
+    bookingController = require('../../src/controllers/bookingController');
   });
 
   afterEach(() => {
