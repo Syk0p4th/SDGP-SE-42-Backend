@@ -1,6 +1,6 @@
 /* eslint-disable max-len */
 // const request = require('supertest');
-const { generateMockToken } = require('../../helpers/testUtils');
+// const { generateMockToken } = require('../../helpers/testUtils');
 
 describe('Booking API - Integration Tests', () => {
   // let app;

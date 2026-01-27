@@ -6,10 +6,10 @@ const {
   createMockUser,
   createMockDocRef,
   createMockCollectionRef
-} = require('../../helpers/testUtils');
+} = require('../helpers/testUtils');
 
 // Mock dependencies
-jest.mock('../../../src/config/logger');
+jest.mock('../../src/config/logger');
 
 describe('Auth Controller - Unit Tests', () => {
   let authController;
@@ -35,7 +35,7 @@ describe('Auth Controller - Unit Tests', () => {
     }));
 
     // Import controller after mocking
-    authController = require('../../../src/controllers/authController');
+    authController = require('../../src/controllers/authController');
   });
 
   afterEach(() => {

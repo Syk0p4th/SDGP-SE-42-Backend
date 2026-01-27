@@ -30,8 +30,8 @@ const app = express();
 // Security middleware
 app.use(helmet());
 app.use(cors({
-    origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
-    credentials: true
+  origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
+  credentials: true
 }));
 
 // Body parser middleware
@@ -47,19 +47,19 @@ app.use(requestLogger);
 
 // API Documentation
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
-    explorer: true,
-    customCss: '.swagger-ui .topbar { display: none }',
-    customSiteTitle: 'Car Wash API Documentation'
+  explorer: true,
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'Car Wash API Documentation'
 }));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-    res.status(200).json({
-        success: true,
-        message: 'Server is running',
-        timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV || 'development'
-    });
+  res.status(200).json({
+    success: true,
+    message: 'Server is running',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
 });
 
 // API Routes
@@ -70,19 +70,19 @@ app.use('/users', userRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
-    res.json({
-        success: true,
-        message: 'Car Wash Backend API',
-        version: '1.0.0',
-        documentation: '/api-docs',
-        endpoints: {
-            health: '/health',
-            auth: '/auth',
-            bookings: '/bookings',
-            services: '/services',
-            users: '/users'
-        }
-    });
+  res.json({
+    success: true,
+    message: 'Car Wash Backend API',
+    version: '1.0.0',
+    documentation: '/api-docs',
+    endpoints: {
+      health: '/health',
+      auth: '/auth',
+      bookings: '/bookings',
+      services: '/services',
+      users: '/users'
+    }
+  });
 });
 
 // 404 handler
@@ -105,6 +105,6 @@ exports.api = functions.https.onRequest(app);
 
 // Log startup
 logger.info('Car Wash Backend API initialized', {
-    environment: process.env.NODE_ENV || 'development',
-    version: '1.0.0'
+  environment: process.env.NODE_ENV || 'development',
+  version: '1.0.0'
 });
