@@ -2,6 +2,7 @@
 // User roles
 const ROLES = {
   CUSTOMER: 'customer',
+  WASHER: 'washer',
   STAFF: 'staff',
   ADMIN: 'admin'
 };
@@ -10,6 +11,13 @@ const ROLES = {
 const USER_STATUS = {
   ACTIVE: 'active',
   DISABLED: 'disabled'
+};
+
+// Washer approval statuses
+const WASHER_STATUS = {
+  PENDING_APPROVAL: 'pending_approval',
+  APPROVED: 'approved',
+  REJECTED: 'rejected'
 };
 
 // Booking statuses
@@ -61,9 +69,9 @@ const NOTIFICATION_TYPES = {
   REVIEW_REQUEST: 'review_request'
 };
 
-// Firestore collections
 const COLLECTIONS = {
   USERS: 'users',
+  WASHERS: 'washers',
   SERVICES: 'services',
   BOOKINGS: 'bookings',
   VEHICLES: 'vehicles',
@@ -75,6 +83,7 @@ const COLLECTIONS = {
 module.exports = {
   ROLES,
   USER_STATUS,
+  WASHER_STATUS,
   BOOKING_STATUS,
   VEHICLE_TYPES,
   SERVICE_CATEGORIES,

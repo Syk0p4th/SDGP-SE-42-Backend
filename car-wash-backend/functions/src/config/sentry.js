@@ -10,9 +10,10 @@ function initSentry() {
   const environment = process.env.NODE_ENV || 'development';
   const dsn = process.env.SENTRY_DSN;
 
-  // Only initialize if DSN is provided and not in test environment
-  if (!dsn || environment === 'test') {
-    console.log('Sentry: Skipping initialization (no DSN or test environment)');
+  // Only initialize if valid DSN is provided and not in test environment
+  const isPlaceholder = !dsn || dsn.includes('your-') || dsn === 'your-sentry-dsn-here';
+  if (isPlaceholder || environment === 'test') {
+    console.log('Sentry: Skipping initialization (no valid DSN or test environment)');
     return;
   }
 

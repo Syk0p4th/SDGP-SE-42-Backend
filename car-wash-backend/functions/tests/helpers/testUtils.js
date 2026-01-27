@@ -68,6 +68,29 @@ const createMockService = (overrides = {}) => ({
 });
 
 /**
+ * Create mock washer data
+ * @param {Object} overrides - Override default values
+ * @return {Object} Mock washer object
+ */
+const createMockWasher = (overrides = {}) => ({
+  uid: 'test-washer-id',
+  email: 'washer@example.com',
+  displayName: 'Test Washer',
+  phoneNumber: '+94771234567',
+  role: 'washer',
+  status: 'active',
+  washerStatus: 'pending_approval',
+  experience: 2,
+  serviceAreas: ['Colombo', 'Gampaha'],
+  totalJobs: 0,
+  rating: 0,
+  reviewCount: 0,
+  availability: true,
+  createdAt: new Date().toISOString(),
+  ...overrides
+});
+
+/**
  * Create mock request object for Express
  * @param {Object} overrides - Override default values
  * @return {Object} Mock request object
@@ -150,6 +173,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 module.exports = {
   generateMockToken,
   createMockUser,
+  createMockWasher,
   createMockBooking,
   createMockService,
   createMockRequest,

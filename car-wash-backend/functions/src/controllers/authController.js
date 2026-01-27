@@ -1,7 +1,7 @@
 /* eslint-disable max-len */
 const { auth, db } = require('../config/firebase');
 const { AppError, asyncHandler } = require('../middleware/errorHandler');
-const { ROLES, USER_STATUS, COLLECTIONS } = require('../utils/constants');
+const { ROLES, USER_STATUS, WASHER_STATUS, COLLECTIONS } = require('../utils/constants');
 const logger = require('../config/logger');
 
 /**
@@ -259,6 +259,124 @@ exports.enableUser = asyncHandler(async (req, res) => {
   res.status(200).json({
     success: true,
     message: 'User enabled successfully'
+  });
+});
+
+/**
+ * Register a new washer
+ * POST /auth/washer/register
+ */
+exports.registerWasher = asyncHandler(async (req, res) => {
+  const { email, password, displayName, phoneNumber, experience, serviceAreas } = req.body;
+
+  // Validate required fields
+  if (!email || !password || !displayName || !phoneNumber) {
+    throw new AppError('Email, password, display name, and phone number are required', 400, 'VALIDATION_ERROR');
+  }
+
+  // Create Firebase Auth user
+  const userRecord = await auth.createUser({
+    email,
+    password,
+    displayName,
+    phoneNumber,
+    emailVerified: false
+  });
+
+  // Create user document in Firestore
+  const userData = {
+    uid: userRecord.uid,
+    email,
+    displayName,
+    phoneNumber,
+    role: ROLES.WASHER,
+    status: USER_STATUS.ACTIVE,
+    washerStatus: WASHER_STATUS.PENDING_APPROVAL,
+    createdAt: new Date().toISOString(),
+    lastLoginAt: null
+  };
+
+  await db.collection(COLLECTIONS.USERS).doc(userRecord.uid).set(userData);
+
+  // Create washer profile document with additional details
+  const washerProfile = {
+    uid: userRecord.uid,
+    experience: experience || 0,
+    serviceAreas: serviceAreas || [],
+    totalJobs: 0,
+    rating: 0,
+    reviewCount: 0,
+    availability: true,
+    createdAt: new Date().toISOString()
+  };
+
+  await db.collection(COLLECTIONS.WASHERS).doc(userRecord.uid).set(washerProfile);
+
+  logger.logAuth('register_washer', userRecord.uid, true);
+  logger.info('Washer registered successfully', { uid: userRecord.uid, email });
+
+  res.status(201).json({
+    success: true,
+    message: 'Washer registered successfully. Your account is pending approval.',
+    user: {
+      uid: userRecord.uid,
+      email: userData.email,
+      displayName: userData.displayName,
+      role: userData.role,
+      washerStatus: userData.washerStatus
+    }
+  });
+});
+
+/**
+ * Login washer (validates washer role and returns status)
+ * POST /auth/washer/login
+ */
+exports.loginWasher = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    throw new AppError('Email is required', 400, 'VALIDATION_ERROR');
+  }
+
+  // Get user by email
+  let userRecord;
+  try {
+    userRecord = await auth.getUserByEmail(email);
+  } catch (error) {
+    throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+  }
+
+  // Get user document from Firestore
+  const userDoc = await db.collection(COLLECTIONS.USERS).doc(userRecord.uid).get();
+
+  if (!userDoc.exists) {
+    throw new AppError('User profile not found', 404, 'USER_NOT_FOUND');
+  }
+
+  const userData = userDoc.data();
+
+  // Verify user is a washer
+  if (userData.role !== ROLES.WASHER) {
+    throw new AppError('This endpoint is only for washer accounts', 403, 'INVALID_ROLE');
+  }
+
+  // Get washer profile
+  const washerDoc = await db.collection(COLLECTIONS.WASHERS).doc(userRecord.uid).get();
+  const washerProfile = washerDoc.exists ? washerDoc.data() : {};
+
+  res.status(200).json({
+    success: true,
+    message: 'Please authenticate using Firebase Auth SDK on client side',
+    instructions: 'Use firebase.auth().signInWithEmailAndPassword(email, password) and send the ID token',
+    washerInfo: {
+      uid: userRecord.uid,
+      email: userData.email,
+      displayName: userData.displayName,
+      washerStatus: userData.washerStatus,
+      experience: washerProfile.experience || 0,
+      rating: washerProfile.rating || 0
+    }
   });
 });
 

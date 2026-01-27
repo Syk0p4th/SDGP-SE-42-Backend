@@ -22,14 +22,20 @@ jest.mock('firebase-admin', () => ({
       })),
       add: jest.fn(),
       get: jest.fn()
-    }))
+    })),
+    settings: jest.fn()
   })),
   auth: jest.fn(() => ({
     verifyIdToken: jest.fn(),
     createUser: jest.fn(),
     getUser: jest.fn(),
+    getUserByEmail: jest.fn(),
     updateUser: jest.fn(),
-    deleteUser: jest.fn()
+    deleteUser: jest.fn(),
+    generateEmailVerificationLink: jest.fn()
+  })),
+  storage: jest.fn(() => ({
+    bucket: jest.fn()
   }))
 }));
 

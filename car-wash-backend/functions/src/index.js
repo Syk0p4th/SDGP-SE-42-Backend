@@ -97,11 +97,11 @@ app.use(sentryErrorHandler);
 // Global error handler (must be last)
 app.use(errorHandler);
 
-// Export Express app for testing
-module.exports = app;
-
 // Export Firebase Function
 exports.api = functions.https.onRequest(app);
+
+// Export Express app for testing (must be after exports.api)
+module.exports.app = app;
 
 // Log startup
 logger.info('Car Wash Backend API initialized', {
