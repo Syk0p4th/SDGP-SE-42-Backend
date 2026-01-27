@@ -1,8 +1,8 @@
 {
   "functions": [
     {
-      "source": "functions",
-      "codebase": "default",
+      "source": "customer-backend\functions",
+      "codebase": "customer",
       "disallowLegacyRuntimeConfig": true,
       "ignore": [
         "node_modules",
