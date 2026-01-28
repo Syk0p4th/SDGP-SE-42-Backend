@@ -1,7 +1,7 @@
 {
-  "name": "car-wash-backend-functions",
+  "name": "washer-backend-functions",
   "version": "1.0.0",
-  "description": "Firebase Functions backend for Car Wash application",
+  "description": "Firebase Functions backend for Washer application",
   "main": "src/index.js",
   "engines": {
     "node": "18"

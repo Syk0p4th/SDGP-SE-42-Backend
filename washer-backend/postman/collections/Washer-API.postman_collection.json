@@ -1,7 +1,7 @@
 {
     "info": {
         "name": "Car Wash API",
-        "_postman_id": "car-wash-api-collection",
+        "_postman_id": "washer-api-collection",
         "description": "Complete API collection for Car Wash Backend",
         "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
     },
@@ -425,7 +425,7 @@
     "variable": [
         {
             "key": "baseUrl",
-            "value": "http://localhost:5001/car-wash-app/us-central1/api",
+            "value": "http://localhost:5001/washxpress-19b94/us-central1/api",
             "type": "string"
         }
     ]

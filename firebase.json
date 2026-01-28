@@ -1,7 +1,22 @@
 {
   "functions": [
     {
-      "source": "customer-backend\functions",
+      "source": "washer-backend/functions",
+      "codebase": "washer",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run lint"
+      ]
+    },
+    {
+      "source": "customer-backend/functions",
       "codebase": "customer",
       "disallowLegacyRuntimeConfig": true,
       "ignore": [
@@ -15,5 +30,20 @@
         "npm --prefix \"$RESOURCE_DIR\" run lint"
       ]
     }
-  ]
+  ],
+  "emulators": {
+    "functions": {
+      "port": 5001
+    },
+    "firestore": {
+      "port": 8080
+    },
+    "auth": {
+      "port": 9099
+    },
+    "ui": {
+      "enabled": true,
+      "port": 4000
+    }
+  }
 }

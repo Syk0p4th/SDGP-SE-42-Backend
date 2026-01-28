@@ -12,7 +12,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-PROJECT_ID="${FIREBASE_PROJECT_ID:-car-wash-app}"
+PROJECT_ID="${FIREBASE_PROJECT_ID:-washxpress-19b94}"
 ENVIRONMENT="${DEPLOY_ENV:-production}"
 FUNCTIONS_DIR="./functions"
 

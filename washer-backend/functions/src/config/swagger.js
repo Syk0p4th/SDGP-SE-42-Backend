@@ -6,12 +6,12 @@ const options = {
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'Car Wash Backend API',
+      title: 'Washer Backend API',
       version: '1.0.0',
-      description: 'API documentation for Car Wash application backend services',
+      description: 'API documentation for Washer application backend services',
       contact: {
         name: 'API Support',
-        email: 'support@carwash.com'
+        email: 'support@washxpress.com'
       },
       license: {
         name: 'MIT',
@@ -20,11 +20,11 @@ const options = {
     },
     servers: [
       {
-        url: 'http://localhost:5001/car-wash-app/us-central1/api',
+        url: 'http://localhost:5001/washxpress-19b94/us-central1/api',
         description: 'Development server'
       },
       {
-        url: 'https://us-central1-car-wash-app.cloudfunctions.net/api',
+        url: 'https://us-central1-washxpress-19b94.cloudfunctions.net/api',
         description: 'Production server'
       }
     ],

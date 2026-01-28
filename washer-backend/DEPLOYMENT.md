@@ -1,6 +1,6 @@
-# Car Wash Backend - Deployment Guide
+# Washer Backend - Deployment Guide
 
-This guide explains how to deploy the Car Wash Backend Firebase Functions to production and staging environments.
+This guide explains how to deploy the Washer Backend Firebase Functions to production and staging environments.
 
 ## Prerequisites
 
@@ -39,7 +39,7 @@ This guide explains how to deploy the Car Wash Backend Firebase Functions to pro
 Set Firebase Functions config using the setup script:
 
 ```bash
-cd car-wash-backend
+cd washer-backend
 ./scripts/setup-env.sh
 ```
 
@@ -61,7 +61,7 @@ firebase functions:config:get
 
 1. Navigate to the project directory:
    ```bash
-   cd car-wash-backend
+   cd washer-backend
    ```
 
 2. Install dependencies:
@@ -84,7 +84,7 @@ firebase functions:config:get
 The deployment script includes pre-deployment validation:
 
 ```bash
-cd car-wash-backend
+cd washer-backend
 ./scripts/deploy.sh
 ```
 
@@ -123,7 +123,7 @@ Add these secrets to your GitHub repository settings:
 
 1. Start Firebase emulators:
    ```bash
-   cd car-wash-backend
+   cd washer-backend
    firebase emulators:start
    ```
 
@@ -178,7 +178,7 @@ firebase functions:log --only api
 If you need to rollback a deployment:
 
 ```bash
-cd car-wash-backend
+cd washer-backend
 ./scripts/rollback.sh
 ```
 

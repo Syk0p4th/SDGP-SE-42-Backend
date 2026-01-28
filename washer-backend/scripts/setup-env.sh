@@ -10,7 +10,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-PROJECT_ID="${FIREBASE_PROJECT_ID:-car-wash-app}"
+PROJECT_ID="${FIREBASE_PROJECT_ID:-washxpress-19b94}"
 
 echo -e "${GREEN}Setting up Firebase Functions environment variables...${NC}"
 echo ""
@@ -22,7 +22,7 @@ if [ ! -f "./functions/.env" ]; then
     cat > ./functions/.env << EOL
 NODE_ENV=production
 SENTRY_DSN=your-sentry-dsn-here
-SENTRY_RELEASE=car-wash-backend@1.0.0
+SENTRY_RELEASE=washer-backend@1.0.0
 EOL
     echo -e "${GREEN}Template .env file created. Please update with actual values.${NC}"
 fi

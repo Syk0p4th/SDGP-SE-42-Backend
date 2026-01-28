@@ -11,7 +11,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-PROJECT_ID="${FIREBASE_PROJECT_ID:-car-wash-app}"
+PROJECT_ID="${FIREBASE_PROJECT_ID:-washxpress-19b94}"
 
 echo -e "${YELLOW}========================================${NC}"
 echo -e "${YELLOW}Firebase Functions Rollback${NC}"

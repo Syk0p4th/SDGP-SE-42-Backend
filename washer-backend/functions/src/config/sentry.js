@@ -31,7 +31,7 @@ function initSentry() {
     ],
 
     // Release tracking
-    release: process.env.SENTRY_RELEASE || 'car-wash-backend@1.0.0',
+    release: process.env.SENTRY_RELEASE || 'washer-backend@1.0.0',
 
     // Before send hook to filter/modify events
     beforeSend(event, hint) {
