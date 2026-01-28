@@ -16,6 +16,10 @@ const { authenticate, isAdmin } = require('../middleware/auth');
 router.post('/register', authController.register);
 router.post('/login', authController.login);
 
+// Washer routes
+router.post('/washer/register', authController.registerWasher);
+router.post('/washer/login', authController.loginWasher);
+
 // Protected routes (require authentication)
 router.get('/profile', authenticate, authController.getProfile);
 router.patch('/profile', authenticate, authController.updateProfile);
