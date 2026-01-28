@@ -1,7 +1,13 @@
 const { admin, db, auth } = require('../../config/firebase');
+const { clientAuth } = require('../../config/firebaseclient');
+const { 
+  verifyPasswordResetCode, 
+  confirmPasswordReset,
+  applyActionCode,
+  checkActionCode
+} = require('firebase/auth');
 const { successResponse, errorResponse } = require('../../utils/response');
 const { handleAuthError } = require('../../utils/errorHandling');
-
 /**
  * Customer Sign In
  * Receives email and password from Flutter app
@@ -47,7 +53,7 @@ exports.signIn = async (req, res) => {
     }
 
     // Step 4: Create a custom token for the user
-    // The Flutter app will use this token to signInWithCustomToken
+    // The react app will use this token to signInWithCustomToken
     const customToken = await auth.createCustomToken(userRecord.uid);
 
     // Step 5: Update last login timestamp
@@ -192,21 +198,6 @@ exports.getProfile = async (req, res) => {
   }
 };
 
-/**
- * Logout (optional - mainly handled on client side)
- */
-exports.signOut = async (req, res) => {
-  try {
-    // You can add additional logout logic here if needed
-    // like revoking refresh tokens, logging logout activity, etc.
-
-    return successResponse(res, null, 'Logged out successfully');
-
-  } catch (error) {
-    console.error('Logout error:', error);
-    return errorResponse(res, 'Logout failed', 500);
-  }
-};
 /**
  * Refresh Token
  * Firebase automatically handles token refresh on the client side
@@ -368,16 +359,39 @@ exports.forgotPassword = async (req, res) => {
  * Verify Password Reset Code
  * Check if reset code is valid
  */
+/**
+ * Verify Password Reset Code
+ */
 exports.verifyPasswordResetCode = async (req, res) => {
   try {
     const { oobCode } = req.body;
 
+    console.log('=== VERIFY RESET CODE DEBUG ===');
+    console.log('1. oobCode received:', oobCode ? 'YES' : 'NO');
+    console.log('2. oobCode length:', oobCode ? oobCode.length : 0);
+    console.log('3. oobCode preview:', oobCode ? oobCode.substring(0, 20) + '...' : 'NONE');
+
     if (!oobCode) {
+      console.log('❌ No oobCode provided');
       return errorResponse(res, 'Reset code is required', 400);
     }
 
-    // Verify the reset code
-    const email = await auth.verifyPasswordResetCode(oobCode);
+    console.log('4. Checking if clientAuth exists:', clientAuth ? 'YES' : 'NO');
+    console.log('5. clientAuth type:', typeof clientAuth);
+
+    if (!clientAuth) {
+      console.log('❌ clientAuth is not initialized!');
+      return errorResponse(res, 'Authentication service not configured', 500);
+    }
+
+    console.log('6. Attempting to verify with Firebase...');
+    
+    // Import the function if not already imported
+    const { verifyPasswordResetCode: verifyCode } = require('firebase/auth');
+    
+    const email = await verifyCode(clientAuth, oobCode);
+
+    console.log('✅ Reset code valid for email:', email);
 
     return successResponse(
       res,
@@ -386,17 +400,50 @@ exports.verifyPasswordResetCode = async (req, res) => {
     );
 
   } catch (error) {
-    console.error('Verify reset code error:', error);
+    console.log('=== ERROR DETAILS ===');
+    console.log('Error code:', error.code);
+    console.log('Error message:', error.message);
+    console.log('Error name:', error.name);
+    console.log('Full error:', JSON.stringify(error, null, 2));
+    console.log('====================');
 
     if (error.code === 'auth/invalid-action-code') {
-      return errorResponse(res, 'Invalid or expired reset code', 400);
+      return errorResponse(
+        res, 
+        'Invalid reset code. The code may have expired or already been used.', 
+        400
+      );
     }
 
     if (error.code === 'auth/expired-action-code') {
-      return errorResponse(res, 'Reset code has expired', 400);
+      return errorResponse(
+        res, 
+        'Reset code has expired. Please request a new password reset link.', 
+        400
+      );
     }
 
-    return errorResponse(res, 'Failed to verify reset code', 500);
+    if (error.code === 'auth/user-not-found') {
+      return errorResponse(
+        res, 
+        'User not found.', 
+        404
+      );
+    }
+
+    if (error.code === 'auth/user-disabled') {
+      return errorResponse(
+        res, 
+        'This account has been disabled.', 
+        403
+      );
+    }
+
+    return errorResponse(
+      res, 
+      'Failed to verify reset code: ' + error.message, 
+      500
+    );
   }
 };
 
@@ -404,34 +451,61 @@ exports.verifyPasswordResetCode = async (req, res) => {
  * Confirm Password Reset
  * Reset password using the code
  */
+/**
+ * Confirm Password Reset
+ * Using Firebase Client SDK
+ */
 exports.confirmPasswordReset = async (req, res) => {
   try {
     const { oobCode, newPassword } = req.body;
 
+    console.log('=== CONFIRM PASSWORD RESET DEBUG ===');
+    console.log('1. oobCode received:', oobCode ? 'YES' : 'NO');
+    console.log('2. newPassword received:', newPassword ? 'YES' : 'NO');
+    console.log('3. newPassword length:', newPassword ? newPassword.length : 0);
+
     if (!oobCode || !newPassword) {
+      console.log('❌ Missing oobCode or newPassword');
       return errorResponse(res, 'Reset code and new password are required', 400);
     }
 
     if (newPassword.length < 6) {
+      console.log('❌ Password too short');
       return errorResponse(res, 'Password must be at least 6 characters', 400);
     }
 
-    // Confirm the password reset
-    await auth.confirmPasswordReset(oobCode, newPassword);
+    console.log('4. Confirming password reset with Firebase Client SDK...');
 
-    // Get user email from code
-    const email = await auth.verifyPasswordResetCode(oobCode).catch(() => null);
+    // Use the imported confirmPasswordReset function from firebase/auth
+    // NOT auth.confirmPasswordReset - that doesn't exist!
+    await confirmPasswordReset(clientAuth, oobCode, newPassword);
 
-    // Log password change
-    if (email) {
-      const userRecord = await auth.getUserByEmail(email).catch(() => null);
-      if (userRecord) {
+    console.log('✅ Password reset confirmed successfully');
+
+    // Optional: Update Firestore timestamp
+    try {
+      console.log('5. Updating Firestore timestamp...');
+      
+      // Verify code to get email (this might fail if code is consumed)
+      const email = await verifyPasswordResetCode(clientAuth, oobCode).catch(() => null);
+      
+      if (email) {
+        const userRecord = await auth.getUserByEmail(email);
+        
         await db.collection('customers').doc(userRecord.uid).update({
           passwordChangedAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
+        console.log('✅ Firestore updated');
+      } else {
+        console.log('⚠️ Could not get email (code already consumed)');
       }
+    } catch (firestoreError) {
+      console.log('⚠️ Firestore update failed:', firestoreError.message);
+      // Don't fail the main request
     }
+
+    console.log('6. Sending success response');
 
     return successResponse(
       res,
@@ -440,17 +514,48 @@ exports.confirmPasswordReset = async (req, res) => {
     );
 
   } catch (error) {
-    console.error('Confirm password reset error:', error);
+    console.log('=== CONFIRM RESET ERROR ===');
+    console.log('Error code:', error.code);
+    console.log('Error message:', error.message);
+    console.log('===========================');
 
     if (error.code === 'auth/invalid-action-code') {
-      return errorResponse(res, 'Invalid or expired reset code', 400);
+      return errorResponse(
+        res, 
+        'Invalid or expired reset code. The code may have already been used.', 
+        400
+      );
+    }
+
+    if (error.code === 'auth/expired-action-code') {
+      return errorResponse(
+        res, 
+        'Reset code has expired. Please request a new password reset link.', 
+        400
+      );
     }
 
     if (error.code === 'auth/weak-password') {
-      return errorResponse(res, 'Password is too weak', 400);
+      return errorResponse(
+        res, 
+        'Password is too weak. Please use a stronger password.', 
+        400
+      );
     }
 
-    return errorResponse(res, 'Failed to reset password', 500);
+    if (error.code === 'auth/user-disabled') {
+      return errorResponse(
+        res, 
+        'This account has been disabled.', 
+        403
+      );
+    }
+
+    return errorResponse(
+      res, 
+      'Failed to reset password: ' + error.message, 
+      500
+    );
   }
 };
 
@@ -502,56 +607,6 @@ exports.sendEmailVerification = async (req, res) => {
   } catch (error) {
     console.error('Send verification error:', error);
     return errorResponse(res, 'Failed to send verification email', 500);
-  }
-};
-
-/**
- * Verify Email
- * Confirm email verification
- */
-exports.verifyEmail = async (req, res) => {
-  try {
-    const { oobCode } = req.body;
-
-    if (!oobCode) {
-      return errorResponse(res, 'Verification code is required', 400);
-    }
-
-    // Apply the email verification code
-    await auth.applyActionCode(oobCode);
-
-    // Get user info from code
-    const info = await auth.checkActionCode(oobCode);
-    const email = info.data.email;
-
-    // Get user by email
-    const userRecord = await auth.getUserByEmail(email);
-
-    // Update customer document
-    await db.collection('customers').doc(userRecord.uid).update({
-      emailVerified: true,
-      emailVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-
-    return successResponse(
-      res,
-      null,
-      'Email verified successfully!'
-    );
-
-  } catch (error) {
-    console.error('Verify email error:', error);
-
-    if (error.code === 'auth/invalid-action-code') {
-      return errorResponse(res, 'Invalid or expired verification code', 400);
-    }
-
-    if (error.code === 'auth/expired-action-code') {
-      return errorResponse(res, 'Verification code has expired', 400);
-    }
-
-    return errorResponse(res, 'Failed to verify email', 500);
   }
 };
 
@@ -712,5 +767,59 @@ exports.googleSignIn = async (req, res) => {
     }
 
     return errorResponse(res, 'Google sign-in failed', 500);
+  }
+};
+
+/**
+ * Verify Email
+ * Using Firebase Client SDK
+ */
+exports.verifyEmail = async (req, res) => {
+  try {
+    const { oobCode } = req.body;
+
+    if (!oobCode) {
+      return errorResponse(res, 'Verification code is required', 400);
+    }
+
+    console.log('Verifying email with code...');
+
+    // Apply the email verification code using Client SDK
+    await applyActionCode(clientAuth, oobCode);
+
+    // Check the action code to get user info
+    const info = await checkActionCode(clientAuth, oobCode);
+    const email = info.data.email;
+
+    // Get user by email
+    const userRecord = await auth.getUserByEmail(email);
+
+    // Update customer document in Firestore
+    await db.collection('customers').doc(userRecord.uid).update({
+      emailVerified: true,
+      emailVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    console.log('Email verified for:', email);
+
+    return successResponse(
+      res,
+      null,
+      'Email verified successfully!'
+    );
+
+  } catch (error) {
+    console.error('Verify email error:', error.code, error.message);
+
+    if (error.code === 'auth/invalid-action-code') {
+      return errorResponse(res, 'Invalid or expired verification code', 400);
+    }
+
+    if (error.code === 'auth/expired-action-code') {
+      return errorResponse(res, 'Verification code has expired', 400);
+    }
+
+    return errorResponse(res, 'Failed to verify email: ' + (error.message || 'Unknown error'), 500);
   }
 };
