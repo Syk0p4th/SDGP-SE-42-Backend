@@ -134,3 +134,93 @@ module.exports = {
   googleSignInValidationRules,
   validate
 };
+
+/**
+ * Validation rules for update profile
+ */
+const updateProfileValidationRules = [
+  body('displayName')
+    .optional()
+    .trim()
+    .isLength({ min: 2 })
+    .withMessage('Display name must be at least 2 characters'),
+  body('phoneNumber')
+    .optional()
+    .matches(/^\+?[1-9]\d{1,14}$/)
+    .withMessage('Invalid phone number format'),
+  body('bio')
+    .optional()
+    .isLength({ max: 500 })
+    .withMessage('Bio must be less than 500 characters')
+];
+
+/**
+ * Validation rules for add/update address
+ */
+const addressValidationRules = [
+  body('label')
+    .trim()
+    .notEmpty()
+    .withMessage('Address label is required')
+    .isLength({ max: 50 })
+    .withMessage('Label must be less than 50 characters'),
+  body('addressLine1')
+    .trim()
+    .notEmpty()
+    .withMessage('Address line 1 is required')
+    .isLength({ max: 200 })
+    .withMessage('Address line 1 must be less than 200 characters'),
+  body('addressLine2')
+    .optional()
+    .trim()
+    .isLength({ max: 200 })
+    .withMessage('Address line 2 must be less than 200 characters'),
+  body('city')
+    .trim()
+    .notEmpty()
+    .withMessage('City is required')
+    .isLength({ max: 100 })
+    .withMessage('City must be less than 100 characters'),
+  body('state')
+    .optional()
+    .trim()
+    .isLength({ max: 100 })
+    .withMessage('State must be less than 100 characters'),
+  body('postalCode')
+    .optional()
+    .trim()
+    .isLength({ max: 20 })
+    .withMessage('Postal code must be less than 20 characters'),
+  body('country')
+    .trim()
+    .notEmpty()
+    .withMessage('Country is required')
+    .isLength({ max: 100 })
+    .withMessage('Country must be less than 100 characters'),
+  body('latitude')
+    .optional()
+    .isFloat({ min: -90, max: 90 })
+    .withMessage('Invalid latitude'),
+  body('longitude')
+    .optional()
+    .isFloat({ min: -180, max: 180 })
+    .withMessage('Invalid longitude'),
+  body('isDefault')
+    .optional()
+    .isBoolean()
+    .withMessage('isDefault must be a boolean')
+];
+
+// Export all validation rules
+module.exports = {
+  loginValidationRules,
+  signupValidationRules,
+  forgotPasswordValidationRules,
+  resetPasswordValidationRules,
+  verifyResetCodeValidationRules,
+  verifyEmailValidationRules,
+  googleSignInValidationRules,
+  updateProfileValidationRules,
+  addressValidationRules,
+  validate
+};

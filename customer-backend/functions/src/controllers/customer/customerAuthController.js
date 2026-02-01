@@ -823,3 +823,178 @@ exports.verifyEmail = async (req, res) => {
     return errorResponse(res, 'Failed to verify email: ' + (error.message || 'Unknown error'), 500);
   }
 };
+/**
+ * Update Customer Profile
+ * Update display name, phone number, and other profile fields
+ */
+exports.updateProfile = async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const { displayName, phoneNumber, bio } = req.body;
+
+    console.log(`Updating profile for user: ${uid}`);
+
+    const updates = {};
+
+    // Validate and add fields to update
+    if (displayName !== undefined) {
+      if (displayName.trim().length < 2) {
+        return errorResponse(res, 'Display name must be at least 2 characters', 400);
+      }
+      updates.displayName = displayName.trim();
+      
+      // Update in Firebase Auth too
+      await auth.updateUser(uid, { displayName: displayName.trim() });
+    }
+
+    if (phoneNumber !== undefined) {
+      // Validate phone number format (basic validation)
+      if (phoneNumber && !/^\+?[1-9]\d{1,14}$/.test(phoneNumber.replace(/[\s-]/g, ''))) {
+        return errorResponse(res, 'Invalid phone number format', 400);
+      }
+      updates.phoneNumber = phoneNumber || null;
+      
+      // Update in Firebase Auth too
+      if (phoneNumber) {
+        await auth.updateUser(uid, { phoneNumber });
+      }
+    }
+
+    if (bio !== undefined) {
+      if (bio && bio.length > 500) {
+        return errorResponse(res, 'Bio must be less than 500 characters', 400);
+      }
+      updates.bio = bio || null;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return errorResponse(res, 'No fields to update', 400);
+    }
+
+    // Add timestamp
+    updates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+
+    // Update in Firestore
+    await db.collection('customers').doc(uid).update(updates);
+
+    // Get updated profile
+    const updatedDoc = await db.collection('customers').doc(uid).get();
+    const updatedData = updatedDoc.data();
+
+    console.log(`Profile updated successfully for: ${uid}`);
+
+    return successResponse(
+      res,
+      {
+        uid: updatedData.uid,
+        email: updatedData.email,
+        displayName: updatedData.displayName,
+        phoneNumber: updatedData.phoneNumber,
+        photoURL: updatedData.photoURL,
+        bio: updatedData.bio,
+        emailVerified: updatedData.emailVerified,
+        userType: updatedData.userType
+      },
+      'Profile updated successfully'
+    );
+
+  } catch (error) {
+    console.error('Update profile error:', error);
+    return errorResponse(res, 'Failed to update profile', 500);
+  }
+};
+
+/**
+ * Upload Profile Photo
+ * Upload profile picture to Firebase Storage
+ */
+exports.uploadProfilePhoto = async (req, res) => {
+  try {
+    const uid = req.user.uid;
+
+    // Check if file was uploaded
+    if (!req.file) {
+      return errorResponse(res, 'No file uploaded', 400);
+    }
+
+    const file = req.file;
+
+    // Validate file type
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.mimetype)) {
+      return errorResponse(
+        res, 
+        'Invalid file type. Only JPEG, PNG, and WebP images are allowed', 
+        400
+      );
+    }
+
+    // Validate file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (file.size > maxSize) {
+      return errorResponse(res, 'File size must be less than 5MB', 400);
+    }
+
+    console.log(`Uploading profile photo for user: ${uid}`);
+
+    // Create file path in Storage
+    const fileName = `profile-photos/${uid}/${Date.now()}-${file.originalname}`;
+    const bucket = storage.bucket();
+    const fileUpload = bucket.file(fileName);
+
+    // Create write stream
+    const blobStream = fileUpload.createWriteStream({
+      metadata: {
+        contentType: file.mimetype,
+        metadata: {
+          firebaseStorageDownloadTokens: uid
+        }
+      }
+    });
+
+    // Handle upload errors
+    blobStream.on('error', (error) => {
+      console.error('Upload error:', error);
+      return errorResponse(res, 'Failed to upload photo', 500);
+    });
+
+    // Handle upload completion
+    blobStream.on('finish', async () => {
+      try {
+        // Make file publicly accessible
+        await fileUpload.makePublic();
+
+        // Get public URL
+        const photoURL = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+
+        // Update user profile in Firestore
+        await db.collection('customers').doc(uid).update({
+          photoURL,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        // Update Firebase Auth profile
+        await auth.updateUser(uid, { photoURL });
+
+        console.log(`Profile photo uploaded successfully for: ${uid}`);
+
+        return successResponse(
+          res,
+          { photoURL },
+          'Profile photo uploaded successfully'
+        );
+
+      } catch (error) {
+        console.error('Error finalizing upload:', error);
+        return errorResponse(res, 'Failed to finalize photo upload', 500);
+      }
+    });
+
+    // Write file to stream
+    blobStream.end(file.buffer);
+
+  } catch (error) {
+    console.error('Upload profile photo error:', error);
+    return errorResponse(res, 'Failed to upload profile photo', 500);
+  }
+};

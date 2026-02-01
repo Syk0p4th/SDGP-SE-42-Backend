@@ -2,7 +2,9 @@ const express = require('express');
 const router = express.Router();
 
 const customerAuthController = require('../controllers/customer/customerAuthController');
+const customerProfileController = require('../controllers/customer/customerProfileController');
 const { verifyToken, isCustomer } = require('../middleware/auth');
+const { upload } = require('../middleware/upload');
 const { 
   loginValidationRules, 
   signupValidationRules, 
@@ -11,6 +13,8 @@ const {
   verifyResetCodeValidationRules,
   verifyEmailValidationRules,
   googleSignInValidationRules,
+  updateProfileValidationRules,
+  addressValidationRules,
   validate 
 } = require('../middleware/validation');
 
@@ -69,7 +73,7 @@ router.post(
   customerAuthController.verifyEmail
 );
 
-// ============ PROTECTED ROUTES (Authentication Required) ============
+// ============ PROTECTED ROUTES (Require Authentication) ============
 
 // Token Management
 router.post(
@@ -79,12 +83,12 @@ router.post(
 );
 
 router.post(
-  '/auth/signout', 
-  verifyToken, 
+  '/auth/signout',
+  verifyToken,
   customerAuthController.signOut
 );
 
-// Email Verification
+// Email Verification (protected)
 router.post(
   '/auth/send-verification-email',
   verifyToken,
@@ -97,12 +101,61 @@ router.get(
   customerAuthController.checkEmailVerificationStatus
 );
 
-// Profile
+// Profile Management
 router.get(
-  '/profile', 
-  verifyToken, 
-  isCustomer, 
+  '/profile',
+  verifyToken,
   customerAuthController.getProfile
+);
+
+router.put(
+  '/profile',
+  verifyToken,
+  updateProfileValidationRules,
+  validate,
+  customerAuthController.updateProfile
+);
+
+router.post(
+  '/profile/photo',
+  verifyToken,
+  upload.single('photo'),
+  customerAuthController.uploadProfilePhoto
+);
+
+// Address Management
+router.get(
+  '/addresses',
+  verifyToken,
+  customerProfileController.getAddresses
+);
+
+router.post(
+  '/addresses',
+  verifyToken,
+  addressValidationRules,
+  validate,
+  customerProfileController.addAddress
+);
+
+router.put(
+  '/addresses/:addressId',
+  verifyToken,
+  addressValidationRules,
+  validate,
+  customerProfileController.updateAddress
+);
+
+router.delete(
+  '/addresses/:addressId',
+  verifyToken,
+  customerProfileController.deleteAddress
+);
+
+router.patch(
+  '/addresses/:addressId/default',
+  verifyToken,
+  customerProfileController.setDefaultAddress
 );
 
 module.exports = router;
