@@ -1,9 +1,27 @@
 const { body, validationResult } = require('express-validator');
 const { errorResponse } = require('../utils/response');
 
-/**
- * Validation rules for login
- */
+// ============================================================
+// MIDDLEWARE: Check validation results
+// ============================================================
+const validate = (req, res, next) => {
+  const errors = validationResult(req);
+
+  if (!errors.isEmpty()) {
+    const formattedErrors = errors.array().map((error) => ({
+      field: error.path,
+      message: error.msg,
+    }));
+
+    return errorResponse(res, 'Validation failed', 400, formattedErrors);
+  }
+
+  next();
+};
+
+// ============================================================
+// AUTH VALIDATION
+// ============================================================
 const loginValidationRules = [
   body('email')
     .trim()
@@ -15,12 +33,9 @@ const loginValidationRules = [
     .isLength({ min: 6 })
     .withMessage('Password must be at least 6 characters long')
     .notEmpty()
-    .withMessage('Password is required')
+    .withMessage('Password is required'),
 ];
 
-/**
- * Validation rules for signup
- */
 const signupValidationRules = [
   body('email')
     .trim()
@@ -42,47 +57,34 @@ const signupValidationRules = [
     .isMobilePhone()
     .withMessage('Please provide a valid phone number')
     .notEmpty()
-    .withMessage('Phone number is required')
+    .withMessage('Phone number is required'),
 ];
 
-/**
- * Middleware to check validation results
- */
-const validate = (req, res, next) => {
-  const errors = validationResult(req);
-  
-  if (!errors.isEmpty()) {
-    const formattedErrors = errors.array().map(error => ({
-      field: error.path,
-      message: error.msg
-    }));
-    
-    return errorResponse(res, 'Validation failed', 400, formattedErrors);
-  }
-  
-  next();
-};
+const googleSignInValidationRules = [
+  body('idToken')
+    .trim()
+    .notEmpty()
+    .withMessage('Google ID token is required'),
+];
 
-module.exports = {
-  loginValidationRules,
-  signupValidationRules,
-  validate
-};
-
-/**
- * Validation rules for forgot password
- */
+// ============================================================
+// PASSWORD RESET VALIDATION
+// ============================================================
 const forgotPasswordValidationRules = [
   body('email')
     .trim()
     .isEmail()
     .withMessage('Please provide a valid email address')
-    .normalizeEmail()
+    .normalizeEmail(),
 ];
 
-/**
- * Validation rules for password reset
- */
+const verifyResetCodeValidationRules = [
+  body('oobCode')
+    .trim()
+    .notEmpty()
+    .withMessage('Reset code is required'),
+];
+
 const resetPasswordValidationRules = [
   body('oobCode')
     .trim()
@@ -91,53 +93,22 @@ const resetPasswordValidationRules = [
   body('newPassword')
     .trim()
     .isLength({ min: 6 })
-    .withMessage('Password must be at least 6 characters long')
+    .withMessage('Password must be at least 6 characters long'),
 ];
 
-/**
- * Validation rules for verify reset code
- */
-const verifyResetCodeValidationRules = [
-  body('oobCode')
-    .trim()
-    .notEmpty()
-    .withMessage('Reset code is required')
-];
-
-/**
- * Validation rules for email verification
- */
+// ============================================================
+// EMAIL VERIFICATION VALIDATION
+// ============================================================
 const verifyEmailValidationRules = [
   body('oobCode')
     .trim()
     .notEmpty()
-    .withMessage('Verification code is required')
+    .withMessage('Verification code is required'),
 ];
 
-/**
- * Validation rules for Google Sign-In
- */
-const googleSignInValidationRules = [
-  body('idToken')
-    .trim()
-    .notEmpty()
-    .withMessage('Google ID token is required')
-];
-
-module.exports = {
-  loginValidationRules,
-  signupValidationRules,
-  forgotPasswordValidationRules,
-  resetPasswordValidationRules,
-  verifyResetCodeValidationRules,
-  verifyEmailValidationRules,
-  googleSignInValidationRules,
-  validate
-};
-
-/**
- * Validation rules for update profile
- */
+// ============================================================
+// PROFILE VALIDATION
+// ============================================================
 const updateProfileValidationRules = [
   body('displayName')
     .optional()
@@ -151,12 +122,12 @@ const updateProfileValidationRules = [
   body('bio')
     .optional()
     .isLength({ max: 500 })
-    .withMessage('Bio must be less than 500 characters')
+    .withMessage('Bio must be less than 500 characters'),
 ];
 
-/**
- * Validation rules for add/update address
- */
+// ============================================================
+// ADDRESS VALIDATION
+// ============================================================
 const addressValidationRules = [
   body('label')
     .trim()
@@ -208,19 +179,73 @@ const addressValidationRules = [
   body('isDefault')
     .optional()
     .isBoolean()
-    .withMessage('isDefault must be a boolean')
+    .withMessage('isDefault must be a boolean'),
 ];
 
-// Export all validation rules
+// ============================================================
+// BOOKING VALIDATION
+// ============================================================
+const createBookingValidationRules = [
+  body('serviceId')
+    .trim()
+    .notEmpty()
+    .withMessage('Service ID is required'),
+  body('scheduledDate')
+    .trim()
+    .notEmpty()
+    .withMessage('Scheduled date is required')
+    .matches(/^\d{4}-\d{2}-\d{2}$/)
+    .withMessage('Date must be in YYYY-MM-DD format'),
+  body('scheduledTime')
+    .trim()
+    .notEmpty()
+    .withMessage('Scheduled time is required')
+    .matches(/^\d{2}:\d{2}$/)
+    .withMessage('Time must be in HH:MM format (24-hour)'),
+  body('addressId')
+    .trim()
+    .notEmpty()
+    .withMessage('Address ID is required'),
+  body('notes')
+    .optional()
+    .isLength({ max: 500 })
+    .withMessage('Notes must be under 500 characters'),
+];
+
+const cancelBookingValidationRules = [
+  body('reason')
+    .optional()
+    .isLength({ max: 300 })
+    .withMessage('Reason must be under 300 characters'),
+];
+
+// ============================================================
+// SINGLE EXPORT — everything in one place
+// ============================================================
 module.exports = {
+  // Auth
   loginValidationRules,
   signupValidationRules,
-  forgotPasswordValidationRules,
-  resetPasswordValidationRules,
-  verifyResetCodeValidationRules,
-  verifyEmailValidationRules,
   googleSignInValidationRules,
+
+  // Password reset
+  forgotPasswordValidationRules,
+  verifyResetCodeValidationRules,
+  resetPasswordValidationRules,
+
+  // Email verification
+  verifyEmailValidationRules,
+
+  // Profile
   updateProfileValidationRules,
+
+  // Address
   addressValidationRules,
-  validate
+
+  // Booking
+  createBookingValidationRules,
+  cancelBookingValidationRules,
+
+  // Middleware
+  validate,
 };

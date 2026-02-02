@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 
 const customerAuthController = require('../controllers/customer/customerAuthController');
+const customerBookingController = require('../controllers/customer/customerBookingController');
 const customerServiceController = require('../controllers/customer/customerServiceController');
 const customerProfileController = require('../controllers/customer/customerProfileController');
 const { verifyToken, isCustomer } = require('../middleware/auth');
@@ -17,6 +18,11 @@ const {
   updateProfileValidationRules,
   addressValidationRules,
   validate 
+} = require('../middleware/validation');
+const {
+  // ... existing imports ...
+  createBookingValidationRules,
+  cancelBookingValidationRules,
 } = require('../middleware/validation');
 
 // ============ PUBLIC ROUTES (No Authentication) ============
@@ -340,6 +346,40 @@ router.patch(
   '/addresses/:addressId/default',
   verifyToken,
   customerProfileController.setDefaultAddress
+);
+
+// ============ BOOKING ROUTES (Require Authentication) ============
+
+// Create booking
+router.post(
+  '/bookings',
+  verifyToken,
+  createBookingValidationRules,
+  validate,
+  customerBookingController.createBooking
+);
+
+// Get my bookings
+router.get(
+  '/bookings',
+  verifyToken,
+  customerBookingController.getBookings
+);
+
+// Get booking details
+router.get(
+  '/bookings/:bookingId',
+  verifyToken,
+  customerBookingController.getBookingDetails
+);
+
+// Cancel booking
+router.patch(
+  '/bookings/:bookingId/cancel',
+  verifyToken,
+  cancelBookingValidationRules,
+  validate,
+  customerBookingController.cancelBooking
 );
 
 module.exports = router;
