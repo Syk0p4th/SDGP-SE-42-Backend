@@ -23,7 +23,9 @@ const {
   // ... existing imports ...
   createBookingValidationRules,
   cancelBookingValidationRules,
+  rescheduleBookingValidationRules,
 } = require('../middleware/validation');
+
 
 // ============ PUBLIC ROUTES (No Authentication) ============
 
@@ -380,6 +382,14 @@ router.patch(
   cancelBookingValidationRules,
   validate,
   customerBookingController.cancelBooking
+);
+// Reschedule booking
+router.patch(
+  '/bookings/:bookingId/reschedule',
+  verifyToken,
+  rescheduleBookingValidationRules,
+  validate,
+  customerBookingController.rescheduleBooking
 );
 
 module.exports = router;

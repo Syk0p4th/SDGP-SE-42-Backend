@@ -218,6 +218,24 @@ const cancelBookingValidationRules = [
     .isLength({ max: 300 })
     .withMessage('Reason must be under 300 characters'),
 ];
+const rescheduleBookingValidationRules = [
+  body('scheduledDate')
+    .trim()
+    .notEmpty()
+    .withMessage('New scheduled date is required')
+    .matches(/^\d{4}-\d{2}-\d{2}$/)
+    .withMessage('Date must be in YYYY-MM-DD format'),
+  body('scheduledTime')
+    .trim()
+    .notEmpty()
+    .withMessage('New scheduled time is required')
+    .matches(/^\d{2}:\d{2}$/)
+    .withMessage('Time must be in HH:MM format (24-hour)'),
+  body('reason')
+    .optional()
+    .isLength({ max: 300 })
+    .withMessage('Reason must be under 300 characters'),
+];
 
 // ============================================================
 // SINGLE EXPORT — everything in one place
@@ -245,6 +263,7 @@ module.exports = {
   // Booking
   createBookingValidationRules,
   cancelBookingValidationRules,
+  rescheduleBookingValidationRules,
 
   // Middleware
   validate,

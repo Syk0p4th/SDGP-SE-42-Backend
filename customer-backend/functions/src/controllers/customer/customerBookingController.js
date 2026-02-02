@@ -326,6 +326,151 @@ exports.cancelBooking = async (req, res) => {
 };
 
 // ============================================================
+// RESCHEDULE BOOKING
+// PATCH /bookings/:bookingId/reschedule
+// ============================================================
+exports.rescheduleBooking = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const { bookingId } = req.params;
+    const { scheduledDate, scheduledTime, reason } = req.body;
+
+    // Fetch booking
+    const bookingDoc = await db.collection('bookings').doc(bookingId).get();
+
+    if (!bookingDoc.exists) {
+      return errorResponse(res, 'Booking not found', 404);
+    }
+
+    const booking = bookingDoc.data();
+
+    // Only allow customer to reschedule their own bookings
+    if (booking.customerId !== uid) {
+      return errorResponse(res, 'Booking not found', 404);
+    }
+
+    // Can only reschedule pending or confirmed bookings
+    if (!['pending', 'confirmed'].includes(booking.status)) {
+      return errorResponse(
+        res,
+        `Cannot reschedule a booking with status "${booking.status}". Only pending or confirmed bookings can be rescheduled.`,
+        400
+      );
+    }
+
+    // --- Check 2-day minimum notice rule ---
+    const now = new Date();
+    const currentScheduled = new Date(`${booking.scheduledDate}T${booking.scheduledTime}`);
+    const twoDaysInMs = 2 * 24 * 60 * 60 * 1000;
+    const timeUntilBooking = currentScheduled - now;
+
+    if (timeUntilBooking < twoDaysInMs) {
+      return errorResponse(
+        res,
+        'Cannot reschedule. Bookings must be rescheduled at least 2 days (48 hours) before the scheduled time.',
+        400
+      );
+    }
+
+    // --- Validate new scheduled date is not in the past ---
+    const newBookingDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
+    if (newBookingDateTime <= now) {
+      return errorResponse(res, 'Cannot reschedule to a past date or time', 400);
+    }
+
+    // --- Validate provider working hours for new time ---
+    const providerDoc = await db.collection('providers').doc(booking.providerId).get();
+    if (!providerDoc.exists) {
+      return errorResponse(res, 'Provider not found', 404);
+    }
+
+    const provider = providerDoc.data();
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const newBookingDate = new Date(scheduledDate);
+    const dayOfWeek = dayNames[newBookingDate.getDay()];
+    const daySchedule = provider.workingHours[dayOfWeek];
+
+    if (!daySchedule || daySchedule.open === 'closed') {
+      return errorResponse(
+        res,
+        `${provider.displayName} is not available on ${dayOfWeek.charAt(0).toUpperCase() + dayOfWeek.slice(1)}`,
+        400
+      );
+    }
+
+    if (scheduledTime < daySchedule.open || scheduledTime >= daySchedule.close) {
+      return errorResponse(
+        res,
+        `${provider.displayName} works from ${daySchedule.open} to ${daySchedule.close} on ${dayOfWeek.charAt(0).toUpperCase() + dayOfWeek.slice(1)}`,
+        400
+      );
+    }
+
+    // --- Check for provider conflicts at the new time ---
+    const conflictCheck = await db
+      .collection('bookings')
+      .where('providerId', '==', booking.providerId)
+      .where('scheduledDate', '==', scheduledDate)
+      .where('status', 'in', ['pending', 'confirmed', 'in_progress'])
+      .get();
+
+    for (const doc of conflictCheck.docs) {
+      // Skip the current booking being rescheduled
+      if (doc.id === bookingId) continue;
+
+      const existing = doc.data();
+      const existingStart = existing.scheduledTime;
+      const existingEnd = addMinutes(existingStart, existing.duration);
+      const newEnd = addMinutes(scheduledTime, booking.duration);
+
+      // Check overlap
+      if (scheduledTime < existingEnd && newEnd > existingStart) {
+        return errorResponse(
+          res,
+          'Provider is already booked at this time. Please choose another time.',
+          400
+        );
+      }
+    }
+
+    // --- Update booking ---
+    const updatedStatusHistory = [
+      ...booking.statusHistory,
+      {
+        status: 'rescheduled',
+        oldDate: booking.scheduledDate,
+        oldTime: booking.scheduledTime,
+        newDate: scheduledDate,
+        newTime: scheduledTime,
+        reason: reason || 'Rescheduled by customer',
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'customer',
+      },
+    ];
+
+    await db.collection('bookings').doc(bookingId).update({
+      scheduledDate: scheduledDate,
+      scheduledTime: scheduledTime,
+      statusHistory: updatedStatusHistory,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Fetch updated booking
+    const updatedDoc = await db.collection('bookings').doc(bookingId).get();
+
+    return successResponse(
+      res,
+      { booking: { id: updatedDoc.id, ...updatedDoc.data() } },
+      'Booking rescheduled successfully'
+    );
+
+  } catch (error) {
+    console.error('Reschedule booking error:', error);
+    return errorResponse(res, 'Failed to reschedule booking', 500);
+  }
+};
+
+// ============================================================
 // UTILITY: Add minutes to a time string (HH:MM)
 // ============================================================
 function addMinutes(timeStr, minutes) {
