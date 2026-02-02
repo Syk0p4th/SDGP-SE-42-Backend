@@ -25,6 +25,7 @@ const {
   cancelBookingValidationRules,
   rescheduleBookingValidationRules,
 } = require('../middleware/validation');
+const customerNotificationController = require('../controllers/customer/customerNotificationController');
 
 
 // ============ PUBLIC ROUTES (No Authentication) ============
@@ -167,10 +168,124 @@ router.patch(
   customerProfileController.setDefaultAddress
 );
 
+// Token Management
+router.post(
+  '/auth/refresh-token',
+  verifyToken,
+  customerAuthController.refreshToken
+);
 
+router.post(
+  '/auth/signout',
+  verifyToken,
+  customerAuthController.signOut
+);
 
+// Email Verification (protected)
+router.post(
+  '/auth/send-verification-email',
+  verifyToken,
+  customerAuthController.sendEmailVerification
+);
 
+router.get(
+  '/auth/check-email-verification',
+  verifyToken,
+  customerAuthController.checkEmailVerificationStatus
+);
 
+// Profile Management
+router.get(
+  '/profile',
+  verifyToken,
+  customerAuthController.getProfile
+);
+
+router.put(
+  '/profile',
+  verifyToken,
+  updateProfileValidationRules,
+  validate,
+  customerAuthController.updateProfile
+);
+
+router.post(
+  '/profile/photo',
+  verifyToken,
+  upload.single('photo'),
+  customerAuthController.uploadProfilePhoto
+);
+
+// Address Management
+router.get(
+  '/addresses',
+  verifyToken,
+  customerProfileController.getAddresses
+);
+
+router.post(
+  '/addresses',
+  verifyToken,
+  addressValidationRules,
+  validate,
+  customerProfileController.addAddress
+);
+
+router.put(
+  '/addresses/:addressId',
+  verifyToken,
+  addressValidationRules,
+  validate,
+  customerProfileController.updateAddress
+);
+
+router.delete(
+  '/addresses/:addressId',
+  verifyToken,
+  customerProfileController.deleteAddress
+);
+
+router.patch(
+  '/addresses/:addressId/default',
+  verifyToken,
+  customerProfileController.setDefaultAddress
+);
+// ============ NOTIFICATION ROUTES (Require Authentication) ============
+
+// Get my notifications
+router.get(
+  '/notifications',
+  verifyToken,
+  customerNotificationController.getNotifications
+);
+
+// Mark notification as read
+router.patch(
+  '/notifications/:notificationId/read',
+  verifyToken,
+  customerNotificationController.markAsRead
+);
+
+// Mark all as read
+router.patch(
+  '/notifications/read-all',
+  verifyToken,
+  customerNotificationController.markAllAsRead
+);
+
+// Delete notification
+router.delete(
+  '/notifications/:notificationId',
+  verifyToken,
+  customerNotificationController.deleteNotification
+);
+
+// Update FCM token
+router.post(
+  '/notifications/fcm-token',
+  verifyToken,
+  customerNotificationController.updateFcmToken
+);
 
 
 
@@ -263,91 +378,6 @@ router.get(
 router.get(
   '/services/:serviceId',
   customerServiceController.getServiceDetails
-);
-
-// ============ PROTECTED ROUTES (Require Authentication) ============
-
-// Token Management
-router.post(
-  '/auth/refresh-token',
-  verifyToken,
-  customerAuthController.refreshToken
-);
-
-router.post(
-  '/auth/signout',
-  verifyToken,
-  customerAuthController.signOut
-);
-
-// Email Verification (protected)
-router.post(
-  '/auth/send-verification-email',
-  verifyToken,
-  customerAuthController.sendEmailVerification
-);
-
-router.get(
-  '/auth/check-email-verification',
-  verifyToken,
-  customerAuthController.checkEmailVerificationStatus
-);
-
-// Profile Management
-router.get(
-  '/profile',
-  verifyToken,
-  customerAuthController.getProfile
-);
-
-router.put(
-  '/profile',
-  verifyToken,
-  updateProfileValidationRules,
-  validate,
-  customerAuthController.updateProfile
-);
-
-router.post(
-  '/profile/photo',
-  verifyToken,
-  upload.single('photo'),
-  customerAuthController.uploadProfilePhoto
-);
-
-// Address Management
-router.get(
-  '/addresses',
-  verifyToken,
-  customerProfileController.getAddresses
-);
-
-router.post(
-  '/addresses',
-  verifyToken,
-  addressValidationRules,
-  validate,
-  customerProfileController.addAddress
-);
-
-router.put(
-  '/addresses/:addressId',
-  verifyToken,
-  addressValidationRules,
-  validate,
-  customerProfileController.updateAddress
-);
-
-router.delete(
-  '/addresses/:addressId',
-  verifyToken,
-  customerProfileController.deleteAddress
-);
-
-router.patch(
-  '/addresses/:addressId/default',
-  verifyToken,
-  customerProfileController.setDefaultAddress
 );
 
 // ============ BOOKING ROUTES (Require Authentication) ============

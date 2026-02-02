@@ -1,5 +1,10 @@
 const { admin, db } = require('../../config/firebase');
 const { successResponse, errorResponse } = require('../../utils/response');
+const {
+  notifyNewBookingRequest,
+  notifyBookingCancelledByCustomer,
+  notifyBookingRescheduled,
+} = require('../../services/notificationService');
 
 // ============================================================
 // CREATE BOOKING
@@ -149,6 +154,14 @@ exports.createBooking = async (req, res) => {
 
     // Fetch the created booking to return
     const createdBooking = await bookingRef.get();
+    try {
+      await notifyNewBookingRequest({
+        id: bookingRef.id,
+        ...bookingData,
+      });
+    } catch (notifyError) {
+      console.error('Notification failed:', notifyError);
+    }
 
     return successResponse(
       res,
@@ -309,6 +322,15 @@ exports.cancelBooking = async (req, res) => {
       statusHistory: updatedStatusHistory,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    // Send cancellation notification
+    try {
+      await notifyBookingCancelledByCustomer(
+        { id: bookingId, ...booking },
+        reason
+      );
+    } catch (notifyError) {
+      console.error('Cancellation notification failed:', notifyError);
+    }
 
     // Fetch updated booking
     const updatedDoc = await db.collection('bookings').doc(bookingId).get();
@@ -454,6 +476,16 @@ exports.rescheduleBooking = async (req, res) => {
       statusHistory: updatedStatusHistory,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    // Send reschedule notification
+    try {
+      await notifyBookingRescheduled(
+        { id: bookingId, scheduledDate, scheduledTime, ...booking },
+        booking.scheduledDate, // Old Date
+        booking.scheduledTime  // Old Time
+      );
+    } catch (notifyError) {
+      console.error('Reschedule notification failed:', notifyError);
+    }
 
     // Fetch updated booking
     const updatedDoc = await db.collection('bookings').doc(bookingId).get();
