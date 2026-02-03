@@ -96,6 +96,11 @@ const isStaff = authorize(ROLES.STAFF, ROLES.ADMIN);
 const isAdmin = authorize(ROLES.ADMIN);
 
 /**
+ * Check if user is washer (or staff/admin)
+ */
+const isWasher = authorize(ROLES.WASHER, ROLES.STAFF, ROLES.ADMIN);
+
+/**
  * Optional authentication - doesn't fail if no token
  */
 const optionalAuth = asyncHandler(async (req, res, next) => {
@@ -132,5 +137,6 @@ module.exports = {
   isCustomer,
   isStaff,
   isAdmin,
+  isWasher,
   optionalAuth
 };

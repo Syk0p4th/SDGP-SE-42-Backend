@@ -169,11 +169,55 @@ async function notifyStaffAssigned(bookingId, customerId, staffName) {
   }
 }
 
+/**
+ * Notify customer when washer accepts their booking
+ */
+async function notifyBookingAccepted(bookingId, customerId, washerName) {
+  try {
+    await createNotification(
+      customerId,
+      NOTIFICATION_TYPES.BOOKING_ACCEPTED,
+      'Booking Accepted',
+      `${washerName} has accepted your wash request and will be arriving soon`,
+      bookingId
+    );
+
+    logger.info('Booking accepted notification sent', { bookingId, customerId, washerName });
+  } catch (error) {
+    logger.error('Failed to send booking accepted notification', { bookingId, error: error.message });
+  }
+}
+
+/**
+ * Notify customer when washer declines their booking
+ */
+async function notifyBookingDeclined(bookingId, customerId, reason) {
+  try {
+    const message = reason ?
+      `Your wash request was declined. Reason: ${reason}` :
+      'Your wash request was declined. We are finding another washer for you.';
+
+    await createNotification(
+      customerId,
+      NOTIFICATION_TYPES.BOOKING_DECLINED,
+      'Booking Declined',
+      message,
+      bookingId
+    );
+
+    logger.info('Booking declined notification sent', { bookingId, customerId });
+  } catch (error) {
+    logger.error('Failed to send booking declined notification', { bookingId, error: error.message });
+  }
+}
+
 module.exports = {
   createNotification,
   notifyNewBooking,
   notifyBookingStatusChange,
   notifyBookingCancelled,
   notifyReviewRequest,
-  notifyStaffAssigned
+  notifyStaffAssigned,
+  notifyBookingAccepted,
+  notifyBookingDeclined
 };

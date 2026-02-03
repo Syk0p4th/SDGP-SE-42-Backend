@@ -361,3 +361,120 @@ exports.getBookingStats = asyncHandler(async (req, res) => {
     stats
   });
 });
+
+/**
+ * Washer accepts a wash request
+ * POST /bookings/:id/accept
+ */
+exports.acceptWash = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const bookingDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
+
+  if (!bookingDoc.exists) {
+    throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+  }
+
+  const bookingData = bookingDoc.data();
+
+  // Check if booking is in pending status
+  if (bookingData.status !== BOOKING_STATUS.PENDING) {
+    throw new AppError('Can only accept pending bookings', 400, 'INVALID_STATUS');
+  }
+
+  // Check if booking already has an assigned washer
+  if (bookingData.assignedStaffId && bookingData.assignedStaffId !== req.user.uid) {
+    throw new AppError('This booking is already assigned to another washer', 400, 'ALREADY_ASSIGNED');
+  }
+
+  const updates = {
+    status: BOOKING_STATUS.ACCEPTED,
+    assignedStaffId: req.user.uid,
+    assignedStaffName: req.user.displayName,
+    acceptedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  await db.collection(COLLECTIONS.BOOKINGS).doc(id).update(updates);
+
+  logger.info('Wash request accepted', {
+    bookingId: id,
+    washerId: req.user.uid
+  });
+
+  // Notify customer that washer accepted
+  await notificationService.notifyBookingAccepted(
+    id,
+    bookingData.customerId,
+    req.user.displayName
+  );
+
+  res.status(200).json({
+    success: true,
+    message: 'Wash request accepted successfully',
+    booking: {
+      id,
+      ...bookingData,
+      ...updates
+    }
+  });
+});
+
+/**
+ * Washer declines a wash request
+ * POST /bookings/:id/decline
+ */
+exports.declineWash = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+
+  const bookingDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
+
+  if (!bookingDoc.exists) {
+    throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+  }
+
+  const bookingData = bookingDoc.data();
+
+  // Check if booking is in pending status
+  if (bookingData.status !== BOOKING_STATUS.PENDING) {
+    throw new AppError('Can only decline pending bookings', 400, 'INVALID_STATUS');
+  }
+
+  // If washer was assigned, they can decline
+  // If not assigned, this washer is declining the request offered to them
+  const updates = {
+    status: BOOKING_STATUS.DECLINED,
+    declinedBy: req.user.uid,
+    declinedByName: req.user.displayName,
+    declineReason: reason || null,
+    declinedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  await db.collection(COLLECTIONS.BOOKINGS).doc(id).update(updates);
+
+  logger.info('Wash request declined', {
+    bookingId: id,
+    washerId: req.user.uid,
+    reason
+  });
+
+  // Notify customer that washer declined
+  await notificationService.notifyBookingDeclined(
+    id,
+    bookingData.customerId,
+    reason
+  );
+
+  res.status(200).json({
+    success: true,
+    message: 'Wash request declined',
+    booking: {
+      id,
+      ...bookingData,
+      ...updates
+    }
+  });
+});
+

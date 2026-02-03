@@ -3,7 +3,7 @@ const express = require('express');
 // eslint-disable-next-line new-cap
 const router = express.Router();
 const bookingController = require('../controllers/bookingController');
-const { authenticate, isStaff } = require('../middleware/auth');
+const { authenticate, isStaff, isWasher } = require('../middleware/auth');
 
 /**
  * @swagger
@@ -17,6 +17,10 @@ router.use(authenticate);
 
 // Get booking statistics (staff/admin only)
 router.get('/stats', isStaff, bookingController.getBookingStats);
+
+// Washer accept/decline wash requests
+router.post('/:id/accept', isWasher, bookingController.acceptWash);
+router.post('/:id/decline', isWasher, bookingController.declineWash);
 
 // CRUD operations
 router.post('/', bookingController.createBooking);

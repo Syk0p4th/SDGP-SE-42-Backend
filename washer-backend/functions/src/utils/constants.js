@@ -23,6 +23,8 @@ const WASHER_STATUS = {
 // Booking statuses
 const BOOKING_STATUS = {
   PENDING: 'pending',
+  ACCEPTED: 'accepted',
+  DECLINED: 'declined',
   CONFIRMED: 'confirmed',
   IN_PROGRESS: 'in_progress',
   COMPLETED: 'completed',
@@ -62,6 +64,8 @@ const PAYMENT_STATUS = {
 // Notification types
 const NOTIFICATION_TYPES = {
   BOOKING_CREATED: 'booking_created',
+  BOOKING_ACCEPTED: 'booking_accepted',
+  BOOKING_DECLINED: 'booking_declined',
   BOOKING_CONFIRMED: 'booking_confirmed',
   BOOKING_CANCELLED: 'booking_cancelled',
   BOOKING_COMPLETED: 'booking_completed',
