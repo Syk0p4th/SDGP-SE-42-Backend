@@ -13,7 +13,48 @@ const {
 exports.createBooking = async (req, res) => {
   try {
     const { uid } = req.user;
-    const { serviceId, scheduledDate, scheduledTime, addressId, notes } = req.body;
+    const { serviceId, scheduledDate, scheduledTime, addressId, vehicleId, notes } = req.body;
+
+    // --- Validate vehicle (REQUIRED NOW) ---
+    if (!vehicleId) {
+      return errorResponse(res, 'Vehicle ID is required', 400);
+    }
+
+    const vehicleDoc = await db
+      .collection('customers')
+      .doc(uid)
+      .collection('vehicles')
+      .doc(vehicleId)
+      .get();
+
+    if (!vehicleDoc.exists || !vehicleDoc.data().isActive) {
+      return errorResponse(res, 'Vehicle not found or inactive', 404);
+    }
+
+    const vehicle = vehicleDoc.data();
+
+    // --- Check if vehicle has active subscription ---
+    let subscription = null;
+    let subscriptionId = null;
+
+    const subscriptionSnapshot = await db
+      .collection('subscriptions')
+      .where('customerId', '==', uid)
+      .where('vehicleId', '==', vehicleId)
+      .where('status', '==', 'active')
+      .limit(1)
+      .get();
+
+    if (!subscriptionSnapshot.empty) {
+      const subscriptionDoc = subscriptionSnapshot.docs[0];
+      subscription = subscriptionDoc.data();
+      subscriptionId = subscriptionDoc.id;
+
+      // Check if subscription has remaining washes
+      if (subscription.remainingWashes <= 0) {
+        return errorResponse(res, 'No remaining washes in your subscription. Please renew or book without subscription.', 400);
+      }
+    }
 
     // --- Validate service exists and is active ---
     const serviceDoc = await db.collection('services').doc(serviceId).get();
@@ -63,7 +104,6 @@ exports.createBooking = async (req, res) => {
     let bookingAddress = null;
 
     if (addressId) {
-      // Use saved address
       const addressDoc = await db
         .collection('customers')
         .doc(uid)
@@ -94,10 +134,18 @@ exports.createBooking = async (req, res) => {
       const existingEnd = addMinutes(existingStart, existing.duration);
       const newEnd = addMinutes(scheduledTime, service.duration);
 
-      // Check overlap
       if (scheduledTime < existingEnd && newEnd > existingStart) {
         return errorResponse(res, 'Provider is already booked at this time. Please choose another time.', 400);
       }
+    }
+
+    // --- Calculate price (free if using subscription, otherwise normal price) ---
+    let totalPrice = service.price;
+    let paidWithSubscription = false;
+
+    if (subscription) {
+      totalPrice = 0;
+      paidWithSubscription = true;
     }
 
     // --- Create booking ---
@@ -105,7 +153,19 @@ exports.createBooking = async (req, res) => {
       customerId: uid,
       providerId: service.providerId,
       serviceId: serviceId,
-      // Snapshot service info at booking time (in case service changes later)
+      vehicleId: vehicleId,
+      subscriptionId: subscriptionId,
+      paidWithSubscription,
+      // Snapshot vehicle info
+      vehicle: {
+        make: vehicle.make,
+        model: vehicle.model,
+        year: vehicle.year,
+        color: vehicle.color,
+        licensePlate: vehicle.licensePlate,
+        nickname: vehicle.nickname,
+      },
+      // Snapshot service info
       service: {
         name: service.name,
         categoryId: service.categoryId,
@@ -135,7 +195,7 @@ exports.createBooking = async (req, res) => {
         country: bookingAddress.country,
         location: bookingAddress.location || null,
       },
-      totalPrice: service.price,
+      totalPrice: totalPrice,
       currency: service.currency,
       notes: notes || null,
       cancellationReason: null,
@@ -152,21 +212,29 @@ exports.createBooking = async (req, res) => {
 
     const bookingRef = await db.collection('bookings').add(bookingData);
 
-    // Fetch the created booking to return
-    const createdBooking = await bookingRef.get();
-    try {
-      await notifyNewBookingRequest({
-        id: bookingRef.id,
-        ...bookingData,
+    // --- Deduct wash from subscription if used ---
+    if (subscription && subscription.remainingWashes !== 999999) {
+      await db.collection('subscriptions').doc(subscriptionId).update({
+        remainingWashes: admin.firestore.FieldValue.increment(-1),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
-    } catch (notifyError) {
-      console.error('Notification failed:', notifyError);
     }
+
+    // Fetch the created booking
+    const createdBooking = await bookingRef.get();
+
+    // Send notification to provider
+    await notifyNewBookingRequest({
+      id: bookingRef.id,
+      ...bookingData,
+    });
 
     return successResponse(
       res,
       { booking: { id: createdBooking.id, ...createdBooking.data() } },
-      'Booking created successfully',
+      subscription
+        ? 'Booking created successfully using your subscription'
+        : 'Booking created successfully',
       201
     );
 

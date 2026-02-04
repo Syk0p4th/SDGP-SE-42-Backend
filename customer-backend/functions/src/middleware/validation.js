@@ -190,6 +190,10 @@ const createBookingValidationRules = [
     .trim()
     .notEmpty()
     .withMessage('Service ID is required'),
+  body('vehicleId')
+    .trim()
+    .notEmpty()
+    .withMessage('Vehicle ID is required'),
   body('scheduledDate')
     .trim()
     .notEmpty()
@@ -236,6 +240,100 @@ const rescheduleBookingValidationRules = [
     .isLength({ max: 300 })
     .withMessage('Reason must be under 300 characters'),
 ];
+// ============================================================
+// VEHICLE VALIDATION
+// ============================================================
+const addVehicleValidationRules = [
+  body('make')
+    .trim()
+    .notEmpty()
+    .withMessage('Vehicle make is required')
+    .isLength({ max: 50 })
+    .withMessage('Make must be less than 50 characters'),
+  body('model')
+    .trim()
+    .notEmpty()
+    .withMessage('Vehicle model is required')
+    .isLength({ max: 50 })
+    .withMessage('Model must be less than 50 characters'),
+  body('year')
+    .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
+    .withMessage('Invalid year'),
+  body('color')
+    .trim()
+    .notEmpty()
+    .withMessage('Vehicle color is required')
+    .isLength({ max: 30 })
+    .withMessage('Color must be less than 30 characters'),
+  body('licensePlate')
+    .trim()
+    .notEmpty()
+    .withMessage('License plate is required')
+    .isLength({ max: 20 })
+    .withMessage('License plate must be less than 20 characters'),
+  body('nickname')
+    .optional()
+    .trim()
+    .isLength({ max: 50 })
+    .withMessage('Nickname must be less than 50 characters'),
+];
+
+const updateVehicleValidationRules = [
+  body('make')
+    .optional()
+    .trim()
+    .isLength({ max: 50 })
+    .withMessage('Make must be less than 50 characters'),
+  body('model')
+    .optional()
+    .trim()
+    .isLength({ max: 50 })
+    .withMessage('Model must be less than 50 characters'),
+  body('year')
+    .optional()
+    .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
+    .withMessage('Invalid year'),
+  body('color')
+    .optional()
+    .trim()
+    .isLength({ max: 30 })
+    .withMessage('Color must be less than 30 characters'),
+  body('licensePlate')
+    .optional()
+    .trim()
+    .isLength({ max: 20 })
+    .withMessage('License plate must be less than 20 characters'),
+  body('nickname')
+    .optional()
+    .trim()
+    .isLength({ max: 50 })
+    .withMessage('Nickname must be less than 50 characters'),
+];
+
+// ============================================================
+// SUBSCRIPTION VALIDATION
+// ============================================================
+const subscribeValidationRules = [
+  body('planId')
+    .trim()
+    .notEmpty()
+    .withMessage('Plan ID is required'),
+  body('vehicleId')
+    .trim()
+    .notEmpty()
+    .withMessage('Vehicle ID is required'),
+  body('autoRenew')
+    .optional()
+    .isBoolean()
+    .withMessage('autoRenew must be a boolean'),
+];
+
+const cancelSubscriptionValidationRules = [
+  body('reason')
+    .optional()
+    .isLength({ max: 300 })
+    .withMessage('Reason must be under 300 characters'),
+];
 
 // ============================================================
 // SINGLE EXPORT — everything in one place
@@ -264,6 +362,14 @@ module.exports = {
   createBookingValidationRules,
   cancelBookingValidationRules,
   rescheduleBookingValidationRules,
+
+  // Vehicle
+  addVehicleValidationRules,
+  updateVehicleValidationRules,
+  
+  // Subscription
+  subscribeValidationRules,
+  cancelSubscriptionValidationRules,
 
   // Middleware
   validate,

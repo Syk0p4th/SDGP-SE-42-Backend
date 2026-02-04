@@ -5,6 +5,8 @@ const customerAuthController = require('../controllers/customer/customerAuthCont
 const customerBookingController = require('../controllers/customer/customerBookingController');
 const customerServiceController = require('../controllers/customer/customerServiceController');
 const customerProfileController = require('../controllers/customer/customerProfileController');
+const customerVehicleController = require('../controllers/customer/customerVehicleController');
+const customerSubscriptionController = require('../controllers/customer/customerSubscriptionController');
 const { verifyToken, isCustomer } = require('../middleware/auth');
 const { upload } = require('../middleware/upload');
 const { 
@@ -24,6 +26,13 @@ const {
   createBookingValidationRules,
   cancelBookingValidationRules,
   rescheduleBookingValidationRules,
+} = require('../middleware/validation');
+const {
+  // ... existing imports ...
+  addVehicleValidationRules,
+  updateVehicleValidationRules,
+  subscribeValidationRules,
+  cancelSubscriptionValidationRules,
 } = require('../middleware/validation');
 const customerNotificationController = require('../controllers/customer/customerNotificationController');
 
@@ -249,6 +258,79 @@ router.patch(
   '/addresses/:addressId/default',
   verifyToken,
   customerProfileController.setDefaultAddress
+);
+// ============ VEHICLE MANAGEMENT ROUTES (Require Authentication) ============
+
+// Get all vehicles
+router.get(
+  '/vehicles',
+  verifyToken,
+  customerVehicleController.getVehicles
+);
+
+// Get vehicle details
+router.get(
+  '/vehicles/:vehicleId',
+  verifyToken,
+  customerVehicleController.getVehicleDetails
+);
+
+// Add vehicle
+router.post(
+  '/vehicles',
+  verifyToken,
+  addVehicleValidationRules,
+  validate,
+  customerVehicleController.addVehicle
+);
+
+// Update vehicle
+router.put(
+  '/vehicles/:vehicleId',
+  verifyToken,
+  updateVehicleValidationRules,
+  validate,
+  customerVehicleController.updateVehicle
+);
+
+// Delete vehicle
+router.delete(
+  '/vehicles/:vehicleId',
+  verifyToken,
+  customerVehicleController.deleteVehicle
+);
+
+// ============ SUBSCRIPTION ROUTES ============
+
+// Get subscription plans (public)
+router.get(
+  '/subscriptions/plans',
+  customerSubscriptionController.getPlans
+);
+
+// Get my subscriptions (protected)
+router.get(
+  '/subscriptions',
+  verifyToken,
+  customerSubscriptionController.getSubscriptions
+);
+
+// Subscribe to plan
+router.post(
+  '/subscriptions',
+  verifyToken,
+  subscribeValidationRules,
+  validate,
+  customerSubscriptionController.subscribe
+);
+
+// Cancel subscription
+router.patch(
+  '/subscriptions/:subscriptionId/cancel',
+  verifyToken,
+  cancelSubscriptionValidationRules,
+  validate,
+  customerSubscriptionController.cancelSubscription
 );
 // ============ NOTIFICATION ROUTES (Require Authentication) ============
 
