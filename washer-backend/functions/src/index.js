@@ -62,25 +62,25 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API Routes
-app.use('/auth', authRoutes);
-app.use('/bookings', bookingRoutes);
-app.use('/services', serviceRoutes);
-app.use('/users', userRoutes);
+// API Routes (prefixed with /api/washer for consistency)
+app.use('/api/washer/auth', authRoutes);
+app.use('/api/washer/bookings', bookingRoutes);
+app.use('/api/washer/services', serviceRoutes);
+app.use('/api/washer/users', userRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'Car Wash Backend API',
+    message: 'Washer Backend API',
     version: '1.0.0',
     documentation: '/api-docs',
     endpoints: {
       health: '/health',
-      auth: '/auth',
-      bookings: '/bookings',
-      services: '/services',
-      users: '/users'
+      auth: '/api/washer/auth',
+      bookings: '/api/washer/bookings',
+      services: '/api/washer/services',
+      users: '/api/washer/users'
     }
   });
 });
@@ -104,7 +104,20 @@ exports.api = functions.https.onRequest(app);
 module.exports.app = app;
 
 // Log startup
-logger.info('Car Wash Backend API initialized', {
+logger.info('Washer Backend API initialized', {
   environment: process.env.NODE_ENV || 'development',
   version: '1.0.0'
 });
+
+// For local testing (standalone server)
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 3001;
+  app.listen(PORT, () => {
+    console.log(`\n🚀 Washer Backend running on port ${PORT}`);
+    console.log(`📍 Health: http://localhost:${PORT}/health`);
+    console.log(`📍 Register: POST http://localhost:${PORT}/api/washer/auth/register`);
+    console.log(`📍 Login: POST http://localhost:${PORT}/api/washer/auth/login`);
+    console.log(`📍 Washer Register: POST http://localhost:${PORT}/api/washer/auth/washer/register`);
+    console.log(`📍 Washer Login: POST http://localhost:${PORT}/api/washer/auth/washer/login\n`);
+  });
+}

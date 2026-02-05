@@ -265,6 +265,7 @@ exports.enableUser = asyncHandler(async (req, res) => {
 /**
  * Register a new washer
  * POST /auth/washer/register
+ * Saves to 'providers' collection with role 'washer'
  */
 exports.registerWasher = asyncHandler(async (req, res) => {
   const { email, password, displayName, phoneNumber, experience, serviceAreas } = req.body;
@@ -283,8 +284,8 @@ exports.registerWasher = asyncHandler(async (req, res) => {
     emailVerified: false
   });
 
-  // Create user document in Firestore
-  const userData = {
+  // Create provider document in Firestore (providers collection)
+  const providerData = {
     uid: userRecord.uid,
     email,
     displayName,
@@ -292,38 +293,31 @@ exports.registerWasher = asyncHandler(async (req, res) => {
     role: ROLES.WASHER,
     status: USER_STATUS.ACTIVE,
     washerStatus: WASHER_STATUS.PENDING_APPROVAL,
-    createdAt: new Date().toISOString(),
-    lastLoginAt: null
-  };
-
-  await db.collection(COLLECTIONS.USERS).doc(userRecord.uid).set(userData);
-
-  // Create washer profile document with additional details
-  const washerProfile = {
-    uid: userRecord.uid,
     experience: experience || 0,
     serviceAreas: serviceAreas || [],
     totalJobs: 0,
     rating: 0,
     reviewCount: 0,
     availability: true,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    lastLoginAt: null
   };
 
-  await db.collection(COLLECTIONS.WASHERS).doc(userRecord.uid).set(washerProfile);
+  // Save to providers collection instead of users
+  await db.collection(COLLECTIONS.PROVIDERS).doc(userRecord.uid).set(providerData);
 
   logger.logAuth('register_washer', userRecord.uid, true);
-  logger.info('Washer registered successfully', { uid: userRecord.uid, email });
+  logger.info('Washer registered successfully', { uid: userRecord.uid, email, collection: 'providers' });
 
   res.status(201).json({
     success: true,
     message: 'Washer registered successfully. Your account is pending approval.',
     user: {
       uid: userRecord.uid,
-      email: userData.email,
-      displayName: userData.displayName,
-      role: userData.role,
-      washerStatus: userData.washerStatus
+      email: providerData.email,
+      displayName: providerData.displayName,
+      role: providerData.role,
+      washerStatus: providerData.washerStatus
     }
   });
 });
@@ -331,6 +325,7 @@ exports.registerWasher = asyncHandler(async (req, res) => {
 /**
  * Login washer (validates washer role and returns status)
  * POST /auth/washer/login
+ * Reads from 'providers' collection
  */
 exports.loginWasher = asyncHandler(async (req, res) => {
   const { email } = req.body;
@@ -347,23 +342,19 @@ exports.loginWasher = asyncHandler(async (req, res) => {
     throw new AppError('User not found', 404, 'USER_NOT_FOUND');
   }
 
-  // Get user document from Firestore
-  const userDoc = await db.collection(COLLECTIONS.USERS).doc(userRecord.uid).get();
+  // Get provider document from Firestore (providers collection)
+  const providerDoc = await db.collection(COLLECTIONS.PROVIDERS).doc(userRecord.uid).get();
 
-  if (!userDoc.exists) {
-    throw new AppError('User profile not found', 404, 'USER_NOT_FOUND');
+  if (!providerDoc.exists) {
+    throw new AppError('Provider profile not found', 404, 'PROVIDER_NOT_FOUND');
   }
 
-  const userData = userDoc.data();
+  const providerData = providerDoc.data();
 
   // Verify user is a washer
-  if (userData.role !== ROLES.WASHER) {
+  if (providerData.role !== ROLES.WASHER) {
     throw new AppError('This endpoint is only for washer accounts', 403, 'INVALID_ROLE');
   }
-
-  // Get washer profile
-  const washerDoc = await db.collection(COLLECTIONS.WASHERS).doc(userRecord.uid).get();
-  const washerProfile = washerDoc.exists ? washerDoc.data() : {};
 
   res.status(200).json({
     success: true,
@@ -371,11 +362,11 @@ exports.loginWasher = asyncHandler(async (req, res) => {
     instructions: 'Use firebase.auth().signInWithEmailAndPassword(email, password) and send the ID token',
     washerInfo: {
       uid: userRecord.uid,
-      email: userData.email,
-      displayName: userData.displayName,
-      washerStatus: userData.washerStatus,
-      experience: washerProfile.experience || 0,
-      rating: washerProfile.rating || 0
+      email: providerData.email,
+      displayName: providerData.displayName,
+      washerStatus: providerData.washerStatus,
+      experience: providerData.experience || 0,
+      rating: providerData.rating || 0
     }
   });
 });

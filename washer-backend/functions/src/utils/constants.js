@@ -75,6 +75,7 @@ const NOTIFICATION_TYPES = {
 
 const COLLECTIONS = {
   USERS: 'users',
+  PROVIDERS: 'providers',
   WASHERS: 'washers',
   SERVICES: 'services',
   BOOKINGS: 'bookings',
