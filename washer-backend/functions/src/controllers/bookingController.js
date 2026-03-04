@@ -478,3 +478,126 @@ exports.declineWash = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Start service
+ * PATCH /bookings/:id/start
+ */
+exports.startService = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const { id } = req.params;
+
+    const bookingDoc = await db.collection('bookings').doc(id).get();
+
+    if (!bookingDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found',
+      });
+    }
+
+    const booking = bookingDoc.data();
+
+    // Verify provider owns this booking
+    if (booking.providerId !== uid) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized',
+      });
+    }
+
+    // Verify status
+    if (booking.status !== 'confirmed') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot start service. Current status: ${booking.status}`,
+      });
+    }
+
+    // Update status
+    await db.collection('bookings').doc(id).update({
+      status: 'in_progress',
+      startedAt: new Date().toISOString(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // TODO: Send notification to customer
+
+    res.status(200).json({
+      success: true,
+      message: 'Service started successfully',
+    });
+
+  } catch (error) {
+    console.error('Start service error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to start service',
+    });
+  }
+};
+
+/**
+ * Complete service
+ * PATCH /bookings/:id/complete
+ */
+exports.completeService = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const { id } = req.params;
+
+    const bookingDoc = await db.collection('bookings').doc(id).get();
+
+    if (!bookingDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found',
+      });
+    }
+
+    const booking = bookingDoc.data();
+
+    // Verify provider owns this booking
+    if (booking.providerId !== uid) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized',
+      });
+    }
+
+    // Verify status
+    if (booking.status !== 'in_progress') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot complete service. Current status: ${booking.status}`,
+      });
+    }
+
+    // Update status
+    await db.collection('bookings').doc(id).update({
+      status: 'completed',
+      completedAt: new Date().toISOString(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Update provider stats
+    await db.collection('providers').doc(uid).update({
+      totalBookings: admin.firestore.FieldValue.increment(1),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // TODO: Send notification to customer
+
+    res.status(200).json({
+      success: true,
+      message: 'Service completed successfully',
+    });
+
+  } catch (error) {
+    console.error('Complete service error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to complete service',
+    });
+  }
+};

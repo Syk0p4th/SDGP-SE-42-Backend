@@ -19,8 +19,8 @@ app.use((req, res, next) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
+  res.status(200).json({
+    status: 'OK',
     message: 'Car Wash Backend API is running',
     timestamp: new Date().toISOString()
   });
@@ -59,13 +59,14 @@ app.use((req, res) => {
 // Export as Firebase Function
 exports.api = functions.https.onRequest(app);
 
+
 // For local testing
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
+  app.listen(PORT, '0.0.0.0', () => {  // ✅ Single listener with all routes
     console.log(`\n🚀 Server running on port ${PORT}`);
-    console.log(`📍 Health: http://localhost:${PORT}/health`);
-    console.log(`📍 Signup: POST http://localhost:${PORT}/api/customer/auth/signup`);
-    console.log(`📍 Login: POST http://localhost:${PORT}/api/customer/auth/signin\n`);
+    console.log(`📍 Health: http://0.0.0.0:${PORT}/health`);
+    console.log(`📍 Signup: POST http://0.0.0.0:${PORT}/api/customer/auth/signup`);
+    console.log(`📍 Login: POST http://0.0.0.0:${PORT}/api/customer/auth/signin\n`);
   });
 }

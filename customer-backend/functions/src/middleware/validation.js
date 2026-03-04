@@ -336,6 +336,45 @@ const cancelSubscriptionValidationRules = [
 ];
 
 // ============================================================
+// REVIEW VALIDATION
+// ============================================================
+const createReviewValidationRules = [
+  body('bookingId')
+    .trim()
+    .notEmpty()
+    .withMessage('Booking ID is required'),
+  body('rating')
+    .isInt({ min: 1, max: 5 })
+    .withMessage('Rating must be between 1 and 5'),
+  body('comment')
+    .optional()
+    .trim()
+    .isLength({ max: 1000 })
+    .withMessage('Comment must be under 1000 characters'),
+];
+
+const updateReviewValidationRules = [
+  body('rating')
+    .optional()
+    .isInt({ min: 1, max: 5 })
+    .withMessage('Rating must be between 1 and 5'),
+  body('comment')
+    .optional()
+    .trim()
+    .isLength({ max: 1000 })
+    .withMessage('Comment must be under 1000 characters'),
+];
+
+const respondToReviewValidationRules = [
+  body('response')
+    .trim()
+    .notEmpty()
+    .withMessage('Response is required')
+    .isLength({ max: 1000 })
+    .withMessage('Response must be under 1000 characters'),
+];
+
+// ============================================================
 // SINGLE EXPORT — everything in one place
 // ============================================================
 module.exports = {
@@ -370,6 +409,11 @@ module.exports = {
   // Subscription
   subscribeValidationRules,
   cancelSubscriptionValidationRules,
+
+  // Review
+  createReviewValidationRules,
+  updateReviewValidationRules,
+  respondToReviewValidationRules,
 
   // Middleware
   validate,

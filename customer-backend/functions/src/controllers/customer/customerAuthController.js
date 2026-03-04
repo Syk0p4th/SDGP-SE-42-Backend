@@ -1,7 +1,7 @@
 const { admin, db, auth } = require('../../config/firebase');
 const { clientAuth } = require('../../config/firebaseclient');
-const { 
-  verifyPasswordResetCode, 
+const {
+  verifyPasswordResetCode,
   confirmPasswordReset,
   applyActionCode,
   checkActionCode
@@ -35,8 +35,8 @@ exports.signIn = async (req, res) => {
 
     if (!customerDoc.exists) {
       return errorResponse(
-        res, 
-        'Customer account not found. Please sign up first.', 
+        res,
+        'Customer account not found. Please sign up first.',
         404
       );
     }
@@ -46,8 +46,8 @@ exports.signIn = async (req, res) => {
     // Step 3: Check if customer account is active
     if (customerData.isDisabled) {
       return errorResponse(
-        res, 
-        'Your account has been disabled. Please contact support.', 
+        res,
+        'Your account has been disabled. Please contact support.',
         403
       );
     }
@@ -184,13 +184,56 @@ exports.signUp = async (req, res) => {
  */
 exports.getProfile = async (req, res) => {
   try {
-    const customerDoc = await db.collection('customers').doc(req.user.uid).get();
+    const uid = req.user.uid;
+    const customerRef = db.collection('customers').doc(uid);
+    const customerDoc = await customerRef.get();
 
     if (!customerDoc.exists) {
       return errorResponse(res, 'Customer not found', 404);
     }
 
-    return successResponse(res, customerDoc.data(), 'Profile retrieved successfully');
+    const customerData = customerDoc.data();
+
+    // Fetch subcollections and auxiliary data in parallel
+    const [addressesSnapshot, vehiclesSnapshot, categoriesSnapshot, servicesSnapshot] = await Promise.all([
+      customerRef.collection('addresses').get(),
+      customerRef.collection('vehicles').where('isActive', '==', true).get(),
+      db.collection('categories').where('isActive', '==', true).get(),
+      db.collection('services').where('isActive', '==', true).limit(50).get()
+    ]);
+
+    const addresses = addressesSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    const vehicles = vehiclesSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    const categories = categoriesSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    const services = servicesSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    return successResponse(
+      res,
+      {
+        ...customerData,
+        uid,
+        addresses,
+        vehicles,
+        categories,
+        services
+      },
+      'Profile retrieved successfully'
+    );
 
   } catch (error) {
     console.error('Get profile error:', error);
@@ -385,10 +428,10 @@ exports.verifyPasswordResetCode = async (req, res) => {
     }
 
     console.log('6. Attempting to verify with Firebase...');
-    
+
     // Import the function if not already imported
     const { verifyPasswordResetCode: verifyCode } = require('firebase/auth');
-    
+
     const email = await verifyCode(clientAuth, oobCode);
 
     console.log('✅ Reset code valid for email:', email);
@@ -409,39 +452,39 @@ exports.verifyPasswordResetCode = async (req, res) => {
 
     if (error.code === 'auth/invalid-action-code') {
       return errorResponse(
-        res, 
-        'Invalid reset code. The code may have expired or already been used.', 
+        res,
+        'Invalid reset code. The code may have expired or already been used.',
         400
       );
     }
 
     if (error.code === 'auth/expired-action-code') {
       return errorResponse(
-        res, 
-        'Reset code has expired. Please request a new password reset link.', 
+        res,
+        'Reset code has expired. Please request a new password reset link.',
         400
       );
     }
 
     if (error.code === 'auth/user-not-found') {
       return errorResponse(
-        res, 
-        'User not found.', 
+        res,
+        'User not found.',
         404
       );
     }
 
     if (error.code === 'auth/user-disabled') {
       return errorResponse(
-        res, 
-        'This account has been disabled.', 
+        res,
+        'This account has been disabled.',
         403
       );
     }
 
     return errorResponse(
-      res, 
-      'Failed to verify reset code: ' + error.message, 
+      res,
+      'Failed to verify reset code: ' + error.message,
       500
     );
   }
@@ -485,13 +528,13 @@ exports.confirmPasswordReset = async (req, res) => {
     // Optional: Update Firestore timestamp
     try {
       console.log('5. Updating Firestore timestamp...');
-      
+
       // Verify code to get email (this might fail if code is consumed)
       const email = await verifyPasswordResetCode(clientAuth, oobCode).catch(() => null);
-      
+
       if (email) {
         const userRecord = await auth.getUserByEmail(email);
-        
+
         await db.collection('customers').doc(userRecord.uid).update({
           passwordChangedAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -521,39 +564,39 @@ exports.confirmPasswordReset = async (req, res) => {
 
     if (error.code === 'auth/invalid-action-code') {
       return errorResponse(
-        res, 
-        'Invalid or expired reset code. The code may have already been used.', 
+        res,
+        'Invalid or expired reset code. The code may have already been used.',
         400
       );
     }
 
     if (error.code === 'auth/expired-action-code') {
       return errorResponse(
-        res, 
-        'Reset code has expired. Please request a new password reset link.', 
+        res,
+        'Reset code has expired. Please request a new password reset link.',
         400
       );
     }
 
     if (error.code === 'auth/weak-password') {
       return errorResponse(
-        res, 
-        'Password is too weak. Please use a stronger password.', 
+        res,
+        'Password is too weak. Please use a stronger password.',
         400
       );
     }
 
     if (error.code === 'auth/user-disabled') {
       return errorResponse(
-        res, 
-        'This account has been disabled.', 
+        res,
+        'This account has been disabled.',
         403
       );
     }
 
     return errorResponse(
-      res, 
-      'Failed to reset password: ' + error.message, 
+      res,
+      'Failed to reset password: ' + error.message,
       500
     );
   }
@@ -842,7 +885,7 @@ exports.updateProfile = async (req, res) => {
         return errorResponse(res, 'Display name must be at least 2 characters', 400);
       }
       updates.displayName = displayName.trim();
-      
+
       // Update in Firebase Auth too
       await auth.updateUser(uid, { displayName: displayName.trim() });
     }
@@ -853,7 +896,7 @@ exports.updateProfile = async (req, res) => {
         return errorResponse(res, 'Invalid phone number format', 400);
       }
       updates.phoneNumber = phoneNumber || null;
-      
+
       // Update in Firebase Auth too
       if (phoneNumber) {
         await auth.updateUser(uid, { phoneNumber });
@@ -923,8 +966,8 @@ exports.uploadProfilePhoto = async (req, res) => {
     const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     if (!allowedTypes.includes(file.mimetype)) {
       return errorResponse(
-        res, 
-        'Invalid file type. Only JPEG, PNG, and WebP images are allowed', 
+        res,
+        'Invalid file type. Only JPEG, PNG, and WebP images are allowed',
         400
       );
     }

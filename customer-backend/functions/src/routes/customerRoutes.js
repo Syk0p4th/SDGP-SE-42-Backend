@@ -6,12 +6,18 @@ const customerBookingController = require('../controllers/customer/customerBooki
 const customerServiceController = require('../controllers/customer/customerServiceController');
 const customerProfileController = require('../controllers/customer/customerProfileController');
 const customerVehicleController = require('../controllers/customer/customerVehicleController');
+const customerReviewController = require('../controllers/customer/customerReviewController');
+const {
+  // ... existing imports ...
+  createReviewValidationRules,
+  updateReviewValidationRules,
+} = require('../middleware/validation');
 const customerSubscriptionController = require('../controllers/customer/customerSubscriptionController');
 const { verifyToken, isCustomer } = require('../middleware/auth');
 const { upload } = require('../middleware/upload');
-const { 
-  loginValidationRules, 
-  signupValidationRules, 
+const {
+  loginValidationRules,
+  signupValidationRules,
   forgotPasswordValidationRules,
   resetPasswordValidationRules,
   verifyResetCodeValidationRules,
@@ -19,7 +25,7 @@ const {
   googleSignInValidationRules,
   updateProfileValidationRules,
   addressValidationRules,
-  validate 
+  validate
 } = require('../middleware/validation');
 const {
   // ... existing imports ...
@@ -41,16 +47,16 @@ const customerNotificationController = require('../controllers/customer/customer
 
 // Basic Authentication
 router.post(
-  '/auth/signup', 
-  signupValidationRules, 
-  validate, 
+  '/auth/signup',
+  signupValidationRules,
+  validate,
   customerAuthController.signUp
 );
 
 router.post(
-  '/auth/signin', 
-  loginValidationRules, 
-  validate, 
+  '/auth/signin',
+  loginValidationRules,
+  validate,
   customerAuthController.signIn
 );
 
@@ -100,6 +106,8 @@ router.post(
   verifyToken,
   customerAuthController.refreshToken
 );
+//Bookings accept by provider
+router.post('/bookings/:id/accept', verifyToken, customerBookingController.acceptBooking);
 
 router.post(
   '/auth/signout',
@@ -375,16 +383,16 @@ router.post(
 
 // Basic Authentication
 router.post(
-  '/auth/signup', 
-  signupValidationRules, 
-  validate, 
+  '/auth/signup',
+  signupValidationRules,
+  validate,
   customerAuthController.signUp
 );
 
 router.post(
-  '/auth/signin', 
-  loginValidationRules, 
-  validate, 
+  '/auth/signin',
+  loginValidationRules,
+  validate,
   customerAuthController.signIn
 );
 
@@ -503,5 +511,46 @@ router.patch(
   validate,
   customerBookingController.rescheduleBooking
 );
+
+// ============ REVIEW ROUTES ============
+
+// Get provider reviews (public)
+router.get(
+  '/reviews/provider/:providerId',
+  customerReviewController.getProviderReviews
+);
+
+// Get my reviews (protected)
+router.get(
+  '/reviews',
+  verifyToken,
+  customerReviewController.getMyReviews
+);
+
+// Create review
+router.post(
+  '/reviews',
+  verifyToken,
+  createReviewValidationRules,
+  validate,
+  customerReviewController.createReview
+);
+
+// Update review
+router.put(
+  '/reviews/:reviewId',
+  verifyToken,
+  updateReviewValidationRules,
+  validate,
+  customerReviewController.updateReview
+);
+
+// Delete review
+router.delete(
+  '/reviews/:reviewId',
+  verifyToken,
+  customerReviewController.deleteReview
+);
+
 
 module.exports = router;
