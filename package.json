@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@payhere/payhere-mobilesdk-reactnative": "^4.0.14"
+  }
+}
