@@ -57,13 +57,14 @@ app.use((req, res) => {
 });
 
 // Export as Firebase Function
-exports.api = functions.https.onRequest(app);
+exports.customerApi = functions.https.onRequest(app);
 
 
 // For local testing
-if (process.env.NODE_ENV !== 'production') {
+// For local testing only
+if (require.main === module) {
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, '0.0.0.0', () => {  // ✅ Single listener with all routes
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n🚀 Server running on port ${PORT}`);
     console.log(`📍 Health: http://0.0.0.0:${PORT}/health`);
     console.log(`📍 Signup: POST http://0.0.0.0:${PORT}/api/customer/auth/signup`);

@@ -20,7 +20,7 @@ const options = {
     },
     servers: [
       {
-        url: 'http://localhost:5001/washxpress-19b94/us-central1/api',
+        url: 'http://192.168.1.5:5001/washxpress-19b94/us-central1/api',
         description: 'Development server'
       },
       {

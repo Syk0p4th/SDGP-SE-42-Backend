@@ -1,41 +1,21 @@
-/* eslint-disable max-len */
 const admin = require('firebase-admin');
-const logger = require('./logger');
 
-// Load service account key
-const serviceAccount = require('../../serviceAccountKey.json');
-
-// Initialize Firebase Admin with service account
-try {
+// Reuse app initialized in index.js
+// If not yet initialized (edge case), initialize with credentials
+if (!admin.apps.length) {
+  const path = require('path');
+  const keyPath = path.resolve(__dirname, '../../serviceAccountKey.json');
+  const serviceAccount = require(keyPath);
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    storageBucket: `${serviceAccount.project_id}.appspot.com`
+    storageBucket: 'washxpress-19b94.appspot.com',
   });
-  logger.info('Firebase Admin initialized successfully', {
-    projectId: serviceAccount.project_id
-  });
-} catch (error) {
-  logger.error('Firebase Admin initialization failed', { error: error.message });
-  throw error;
 }
 
-// Export Firestore instance
 const db = admin.firestore();
-
-// Export Auth instance
 const auth = admin.auth();
-
-// Export Storage instance
 const storage = admin.storage();
 
-// Firestore settings
-db.settings({
-  ignoreUndefinedProperties: true
-});
+db.settings({ ignoreUndefinedProperties: true });
 
-module.exports = {
-  admin,
-  db,
-  auth,
-  storage
-};
+module.exports = { admin, db, auth, storage };

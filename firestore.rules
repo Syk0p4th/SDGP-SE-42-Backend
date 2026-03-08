@@ -1,0 +1,33 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Rules for the 'customers'
+    match /customers/{customerId} {
+      
+      allow read, update: if request.auth != null && request.auth.uid == customerId;
+      
+      allow create: if request.auth != null && request.auth.uid == customerId;
+           
+      match /vehicles/{vehicleId} {
+       
+        allow read, create, update, delete: if request.auth != null && request.auth.uid == customerId;
+      }
+
+     
+      match /addresses/{addressId} {
+        
+        allow read, create, update, delete: if request.auth != null && request.auth.uid == customerId;
+      }
+
+      match /services/{documents=**} {
+        allow read: if true;
+      }
+    }
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
