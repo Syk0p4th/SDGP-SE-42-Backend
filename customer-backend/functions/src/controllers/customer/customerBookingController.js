@@ -35,19 +35,59 @@ const COLLECTIONS = {
 };
 
 // ============================================================
+// VEHICLE TYPE PRICE MULTIPLIERS
+// Larger/more complex vehicles cost more to wash
+// ============================================================
+const VEHICLE_TYPE_MULTIPLIERS = {
+  'Sedan':       1.0,
+  'Hatchback':   1.0,
+  'Coupe':       1.0,
+  'Convertible': 1.1,
+  'Wagon':       1.2,
+  'SUV':         1.3,
+  'Van':         1.4,
+  'Truck':       1.5,
+};
+
+function getTypeMultiplier(vehicleType) {
+  return VEHICLE_TYPE_MULTIPLIERS[vehicleType] || 1.0;
+}
+
+/**
+ * Calculate final price based on base service price + vehicle type
+ * Returns { totalPrice, multiplier, breakdown }
+ */
+function calculatePrice(basePrice, vehicleType) {
+  const multiplier = getTypeMultiplier(vehicleType);
+  const totalPrice = Math.round(basePrice * multiplier);
+  return {
+    totalPrice,
+    multiplier,
+    breakdown: {
+      basePrice,
+      vehicleType: vehicleType || 'Unknown',
+      multiplier,
+      finalPrice: totalPrice,
+    },
+  };
+}
+
+// ============================================================
 // CREATE BOOKING
 // POST /bookings
 // ============================================================
 exports.createBooking = asyncHandler(async (req, res) => {
   try {
-    const { serviceId, vehicleId, scheduledDate, scheduledTime, addressId, addressSnapshot, notes } = req.body;
+    const { serviceId, vehicleId, scheduledDate, scheduledTime, addressId, notes } = req.body;
     const { uid } = req.user;
 
-    // --- Validate vehicle (REQUIRED NOW) ---
-    if (!vehicleId) {
-      return errorResponse(res, 'Vehicle ID is required', 400);
-    }
+    // --- Validate required fields ---
+    if (!vehicleId) return errorResponse(res, 'Vehicle ID is required', 400);
+    if (!serviceId) return errorResponse(res, 'Service ID is required', 400);
+    if (!scheduledDate || !scheduledTime) return errorResponse(res, 'Scheduled date and time are required', 400);
+    if (!addressId) return errorResponse(res, 'Please provide a saved address ID', 400);
 
+    // --- Validate vehicle ---
     const vehicleDoc = await db
       .collection('customers')
       .doc(uid)
@@ -61,7 +101,33 @@ exports.createBooking = asyncHandler(async (req, res) => {
 
     const vehicle = vehicleDoc.data();
 
-    // --- Check if vehicle has active subscription ---
+    // --- Validate service ---
+    const serviceDoc = await db.collection('services').doc(serviceId).get();
+    if (!serviceDoc.exists) return errorResponse(res, 'Service not found', 404);
+
+    const service = serviceDoc.data();
+    if (!service.isActive) return errorResponse(res, 'This service is currently unavailable', 400);
+
+    // --- Validate scheduled date is not in the past ---
+    const now = new Date();
+    const bookingDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
+    if (bookingDateTime <= now) {
+      return errorResponse(res, 'Cannot book a past date or time', 400);
+    }
+
+    // --- Validate address ---
+    const addressDoc = await db
+      .collection('customers')
+      .doc(uid)
+      .collection('addresses')
+      .doc(addressId)
+      .get();
+
+    if (!addressDoc.exists) return errorResponse(res, 'Address not found', 404);
+
+    const bookingAddress = { id: addressDoc.id, ...addressDoc.data() };
+
+    // --- Check for active subscription on this vehicle ---
     let subscription = null;
     let subscriptionId = null;
 
@@ -78,150 +144,67 @@ exports.createBooking = asyncHandler(async (req, res) => {
       subscription = subscriptionDoc.data();
       subscriptionId = subscriptionDoc.id;
 
-      // Check if subscription has remaining washes
       if (subscription.remainingWashes <= 0) {
-        return errorResponse(res, 'No remaining washes in your subscription. Please renew or book without subscription.', 400);
+        return errorResponse(
+          res,
+          'No remaining washes in your subscription. Please renew or book without subscription.',
+          400
+        );
       }
     }
 
-    // --- Validate service exists and is active ---
-    const serviceDoc = await db.collection('services').doc(serviceId).get();
-    if (!serviceDoc.exists) {
-      return errorResponse(res, 'Service not found', 404);
-    }
-
-    const service = serviceDoc.data();
-    if (!service.isActive) {
-      return errorResponse(res, 'This service is currently unavailable', 400);
-    }
-
-    // --- Validate provider exists and is active ---
-    const providerDoc = await db.collection('providers').doc(service.providerId).get();
-    if (!providerDoc.exists || !providerDoc.data().isActive) {
-      return errorResponse(res, 'Provider is currently unavailable', 400);
-    }
-
-    const provider = providerDoc.data();
-
-    // --- Validate provider working hours ---
-    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-    const bookingDate = new Date(scheduledDate);
-    const dayOfWeek = dayNames[bookingDate.getDay()];
-    const daySchedule = provider.workingHours[dayOfWeek];
-
-    if (!daySchedule || daySchedule.open === 'closed') {
-      return errorResponse(res, `${provider.displayName} is not available on ${dayOfWeek.charAt(0).toUpperCase() + dayOfWeek.slice(1)}`, 400);
-    }
-
-    if (scheduledTime < daySchedule.open || scheduledTime >= daySchedule.close) {
-      return errorResponse(
-        res,
-        `${provider.displayName} works from ${daySchedule.open} to ${daySchedule.close} on ${dayOfWeek.charAt(0).toUpperCase() + dayOfWeek.slice(1)}`,
-        400
-      );
-    }
-
-    // --- Validate scheduled date is not in the past ---
-    const now = new Date();
-    const bookingDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
-    if (bookingDateTime <= now) {
-      return errorResponse(res, 'Cannot book a past date or time', 400);
-    }
-
-    // --- Validate address ---
-    let bookingAddress = null;
-
-    if (addressId) {
-      const addressDoc = await db
-        .collection('customers')
-        .doc(uid)
-        .collection('addresses')
-        .doc(addressId)
-        .get();
-
-      if (!addressDoc.exists) {
-        return errorResponse(res, 'Address not found', 404);
-      }
-
-      bookingAddress = { id: addressDoc.id, ...addressDoc.data() };
-    } else {
-      return errorResponse(res, 'Please provide a saved address ID', 400);
-    }
-
-    // --- Check for provider conflicts (double booking) ---
-    const conflictCheck = await db
-      .collection('bookings')
-      .where('providerId', '==', service.providerId)
-      .where('scheduledDate', '==', scheduledDate)
-      .where('status', 'in', ['pending', 'confirmed', 'in_progress'])
-      .get();
-
-    for (const doc of conflictCheck.docs) {
-      const existing = doc.data();
-      const existingStart = existing.scheduledTime;
-      const existingEnd = addMinutes(existingStart, existing.duration);
-      const newEnd = addMinutes(scheduledTime, service.duration);
-
-      if (scheduledTime < existingEnd && newEnd > existingStart) {
-        return errorResponse(res, 'Provider is already booked at this time. Please choose another time.', 400);
-      }
-    }
-
-    // --- Calculate price (free if using subscription, otherwise normal price) ---
-    let totalPrice = service.price;
+    // --- Calculate price with vehicle type multiplier ---
+    // Subscription overrides to free; otherwise apply type multiplier
+    let totalPrice = 0;
     let paidWithSubscription = false;
+    let priceBreakdown = null;
 
     if (subscription) {
       totalPrice = 0;
       paidWithSubscription = true;
+      priceBreakdown = {
+        basePrice: service.price,
+        vehicleType: vehicle.type || 'Unknown',
+        multiplier: getTypeMultiplier(vehicle.type),
+        finalPrice: 0,
+        coveredBySubscription: true,
+      };
+    } else {
+      const pricing = calculatePrice(service.price, vehicle.type);
+      totalPrice = pricing.totalPrice;
+      priceBreakdown = pricing.breakdown;
     }
 
-    // --- Create booking ---
+    // --- Build booking document ---
     const bookingData = {
-      customerId: req.user.uid,
-      customerName: req.user.displayName,
-      providerId: null, // <--- IMPORTANT: Starts as null
-      serviceId: serviceId,
-      categoryId: service.categoryId, // <--- CRITICAL FOR FILTERING: Washers will filter by this to see if they are qualified
-      vehicleId: vehicleId,
-      subscriptionId: subscriptionId,
-      paidWithSubscription,
-      status: BOOKING_STATUS.PENDING,
-      assignedStaffId: null,   // Explicitly null so it enters the pool
+      customerId: uid,
+      customerName: req.user.displayName || null,
+
+      // Race mode — no provider assigned at creation
+      providerId: null,
+      assignedStaffId: null,
       assignedStaffName: null,
 
-      //Location
-      location: addressSnapshot?.location || null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      // Snapshot vehicle info
-      vehicle: {
-        make: vehicle.make,
-        model: vehicle.model,
-        year: vehicle.year,
-        color: vehicle.color,
-        licensePlate: vehicle.licensePlate,
-        nickname: vehicle.nickname,
-      },
-      // Snapshot service info
-      service: {
-        name: service.name,
-        categoryId: service.categoryId,
-        price: service.price,
-        duration: service.duration,
-        currency: service.currency,
-      },
-      // Snapshot provider info
-      provider: {
-        displayName: provider.displayName,
-        photoURL: provider.photoURL,
-        rating: provider.rating,
-        area: provider.area,
-      },
-      status: 'pending',
-      scheduledDate: scheduledDate,
-      scheduledTime: scheduledTime,
+      serviceId,
+      categoryId: service.categoryId, // Washers filter by this for qualification
+      vehicleId,
+      subscriptionId,
+      paidWithSubscription,
+
+      status: BOOKING_STATUS.PENDING,
+
+      scheduledDate,
+      scheduledTime,
       duration: service.duration,
+
+      totalPrice,
+      currency: service.currency || 'LKR',
+      priceBreakdown, // Stored for transparency / admin review
+
+      notes: notes || null,
+      cancellationReason: null,
+
+      // Address snapshot
       address: {
         id: bookingAddress.id,
         label: bookingAddress.label,
@@ -233,10 +216,27 @@ exports.createBooking = asyncHandler(async (req, res) => {
         country: bookingAddress.country,
         location: bookingAddress.location || null,
       },
-      totalPrice: totalPrice,
-      currency: service.currency,
-      notes: notes || null,
-      cancellationReason: null,
+
+      // Vehicle snapshot (includes type for washer visibility)
+      vehicle: {
+        make: vehicle.make,
+        model: vehicle.model,
+        year: vehicle.year,
+        type: vehicle.type || null,
+        color: vehicle.color,
+        licensePlate: vehicle.licensePlate,
+        nickname: vehicle.nickname,
+      },
+
+      // Service snapshot
+      service: {
+        name: service.name,
+        categoryId: service.categoryId,
+        price: service.price,
+        duration: service.duration,
+        currency: service.currency || 'LKR',
+      },
+
       statusHistory: [
         {
           status: 'pending',
@@ -244,23 +244,14 @@ exports.createBooking = asyncHandler(async (req, res) => {
           updatedBy: 'customer',
         },
       ],
+
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
     const bookingRef = await db.collection(COLLECTIONS.BOOKINGS).add(bookingData);
 
-    // Notify about the new booking
-    try {
-      await notifyNewBookingRequest({
-        id: bookingRef.id,
-        ...bookingData,
-      });
-    } catch (notifyError) {
-      console.error('Initial notification failed:', notifyError);
-    }
-
-    // --- Deduct wash from subscription if used ---
+    // --- Deduct subscription wash ---
     if (subscription && subscription.remainingWashes !== 999999) {
       await db.collection('subscriptions').doc(subscriptionId).update({
         remainingWashes: admin.firestore.FieldValue.increment(-1),
@@ -268,10 +259,14 @@ exports.createBooking = asyncHandler(async (req, res) => {
       });
     }
 
-    // Fetch the created booking
-    const createdBooking = await bookingRef.get();
+    // --- Notify available washers ---
+    try {
+      await notifyNewBookingRequest({ id: bookingRef.id, ...bookingData });
+    } catch (notifyError) {
+      console.error('Booking notification failed:', notifyError);
+    }
 
-    // Send notification (optional second call removed as it was redundant/broken)
+    const createdBooking = await bookingRef.get();
 
     return successResponse(
       res,
@@ -288,18 +283,16 @@ exports.createBooking = asyncHandler(async (req, res) => {
   }
 });
 
-//AcceptBooking by washers
+// ============================================================
+// ACCEPT BOOKING (Race mode — washer claims the job)
+// POST /bookings/:id/accept
+// ============================================================
 exports.acceptBooking = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const staffId = req.user.uid;
   let bookingData;
 
-  // Note: verifyToken doesn't include roles, so we should fetch or rely on tokens/middleware
-  // For now, mirroring the user's logic but with proper constants and error handling
-
   const bookingRef = db.collection(COLLECTIONS.BOOKINGS).doc(id);
-  // Using 'customers' or 'providers' based on the project structure
-  // The user's snippet used COLLECTIONS.USERS, I'll keep it but define it
   const staffRef = db.collection(COLLECTIONS.USERS).doc(staffId);
 
   try {
@@ -307,50 +300,37 @@ exports.acceptBooking = asyncHandler(async (req, res) => {
       const bookingDoc = await transaction.get(bookingRef);
       const staffDoc = await transaction.get(staffRef);
 
-      if (!bookingDoc.exists) {
-        throw new Error('BOOKING_NOT_FOUND');
-      }
-      if (!staffDoc.exists) {
-        throw new Error('STAFF_NOT_FOUND');
-      }
+      if (!bookingDoc.exists) throw new Error('BOOKING_NOT_FOUND');
+      if (!staffDoc.exists) throw new Error('STAFF_NOT_FOUND');
 
       bookingData = bookingDoc.data();
       const staffData = staffDoc.data();
 
-      // Check role if stored in doc
-      if (staffData.userType !== ROLES.STAFF && staffData.role !== ROLES.STAFF) {
-        // Log but let it pass if user intended this for specific staff
-      }
-
-      // 1. Race Condition Check
+      // Race condition check — first one wins
       if (bookingData.status !== BOOKING_STATUS.PENDING || bookingData.assignedStaffId) {
         throw new Error('ALREADY_CLAIMED');
       }
 
-      // 2. Certification Check
+      // Certification check
       if (staffData.certifiedServices && !staffData.certifiedServices.includes(bookingData.serviceId)) {
         throw new Error('UNQUALIFIED');
       }
 
-      // 3. Lock it in
       transaction.update(bookingRef, {
         status: BOOKING_STATUS.CONFIRMED,
         assignedStaffId: staffId,
         assignedStaffName: staffData.displayName || 'Staff',
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     });
 
-    // Notify the customer that their wash is confirmed
     try {
       const { notifyBookingConfirmed } = require('../../services/notificationService');
       await notifyBookingConfirmed({
-        id: id,
+        id,
         ...bookingData,
         providerId: staffId,
-        provider: {
-          displayName: req.user.displayName || 'A Provider'
-        }
+        provider: { displayName: req.user.displayName || 'A Provider' },
       });
     } catch (notifyError) {
       console.error('Confirmation notification failed:', notifyError);
@@ -359,12 +339,11 @@ exports.acceptBooking = asyncHandler(async (req, res) => {
     return res.status(200).json({ success: true, message: 'Job secured!' });
 
   } catch (error) {
-    console.error('Accept booking error:', error);
     if (error.message === 'BOOKING_NOT_FOUND') return errorResponse(res, 'Booking not found', 404);
     if (error.message === 'STAFF_NOT_FOUND') return errorResponse(res, 'Provider profile not found', 404);
     if (error.message === 'ALREADY_CLAIMED') return errorResponse(res, 'Another provider has already claimed this job.', 400);
-    if (error.message === 'UNQUALIFIED') return errorResponse(res, 'You are not certified to perform this specific service.', 400);
-
+    if (error.message === 'UNQUALIFIED') return errorResponse(res, 'You are not certified to perform this service.', 400);
+    console.error('Accept booking error:', error);
     return errorResponse(res, 'Failed to accept booking', 500);
   }
 });
@@ -378,35 +357,21 @@ exports.getBookings = async (req, res) => {
     const { uid } = req.user;
     const { status, startDate, endDate, limit = 20, page = 1 } = req.query;
 
-    // Base query - only this customer's bookings
     let query = db.collection('bookings').where('customerId', '==', uid);
 
-    // Filter by status
     if (status) {
       const validStatuses = ['pending', 'confirmed', 'rejected', 'in_progress', 'completed', 'cancelled'];
-      if (!validStatuses.includes(status)) {
-        return errorResponse(res, 'Invalid status filter', 400);
-      }
+      if (!validStatuses.includes(status)) return errorResponse(res, 'Invalid status filter', 400);
       query = query.where('status', '==', status);
     }
 
-    // Filter by date range
-    if (startDate) {
-      query = query.where('scheduledDate', '>=', startDate);
-    }
-    if (endDate) {
-      query = query.where('scheduledDate', '<=', endDate);
-    }
+    if (startDate) query = query.where('scheduledDate', '>=', startDate);
+    if (endDate) query = query.where('scheduledDate', '<=', endDate);
 
-    // Fetch all matching
     const snapshot = await query.get();
 
-    let bookings = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    let bookings = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
-    // Sort by scheduledDate desc (newest first)
     bookings.sort((a, b) => {
       if (a.scheduledDate > b.scheduledDate) return -1;
       if (a.scheduledDate < b.scheduledDate) return 1;
@@ -414,8 +379,6 @@ exports.getBookings = async (req, res) => {
     });
 
     const totalCount = bookings.length;
-
-    // Paginate
     const pageSize = Math.min(Number(limit), 50);
     const skip = (Number(page) - 1) * pageSize;
     const paginatedBookings = bookings.slice(skip, skip + pageSize);
@@ -448,16 +411,11 @@ exports.getBookingDetails = async (req, res) => {
 
     const bookingDoc = await db.collection('bookings').doc(bookingId).get();
 
-    if (!bookingDoc.exists) {
-      return errorResponse(res, 'Booking not found', 404);
-    }
+    if (!bookingDoc.exists) return errorResponse(res, 'Booking not found', 404);
 
     const booking = { id: bookingDoc.id, ...bookingDoc.data() };
 
-    // Only allow customer to see their own bookings
-    if (booking.customerId !== uid) {
-      return errorResponse(res, 'Booking not found', 404);
-    }
+    if (booking.customerId !== uid) return errorResponse(res, 'Booking not found', 404);
 
     return successResponse(res, { booking }, 'Booking details retrieved successfully');
 
@@ -478,19 +436,12 @@ exports.cancelBooking = async (req, res) => {
     const { reason } = req.body;
 
     const bookingDoc = await db.collection('bookings').doc(bookingId).get();
-
-    if (!bookingDoc.exists) {
-      return errorResponse(res, 'Booking not found', 404);
-    }
+    if (!bookingDoc.exists) return errorResponse(res, 'Booking not found', 404);
 
     const booking = bookingDoc.data();
 
-    // Only allow customer to cancel their own bookings
-    if (booking.customerId !== uid) {
-      return errorResponse(res, 'Booking not found', 404);
-    }
+    if (booking.customerId !== uid) return errorResponse(res, 'Booking not found', 404);
 
-    // Can only cancel pending or confirmed bookings
     if (!['pending', 'confirmed'].includes(booking.status)) {
       return errorResponse(
         res,
@@ -499,14 +450,9 @@ exports.cancelBooking = async (req, res) => {
       );
     }
 
-    // Update booking
     const updatedStatusHistory = [
-      ...booking.statusHistory,
-      {
-        status: 'cancelled',
-        updatedAt: new Date().toISOString(),
-        updatedBy: 'customer',
-      },
+      ...(booking.statusHistory || []),
+      { status: 'cancelled', updatedAt: new Date().toISOString(), updatedBy: 'customer' },
     ];
 
     await db.collection('bookings').doc(bookingId).update({
@@ -515,17 +461,25 @@ exports.cancelBooking = async (req, res) => {
       statusHistory: updatedStatusHistory,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-    // Send cancellation notification
+
+    // Refund subscription wash if it was used
+    if (booking.paidWithSubscription && booking.subscriptionId) {
+      try {
+        await db.collection('subscriptions').doc(booking.subscriptionId).update({
+          remainingWashes: admin.firestore.FieldValue.increment(1),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (refundError) {
+        console.error('Subscription refund failed:', refundError);
+      }
+    }
+
     try {
-      await notifyBookingCancelledByCustomer(
-        { id: bookingId, ...booking },
-        reason
-      );
+      await notifyBookingCancelledByCustomer({ id: bookingId, ...booking }, reason);
     } catch (notifyError) {
       console.error('Cancellation notification failed:', notifyError);
     }
 
-    // Fetch updated booking
     const updatedDoc = await db.collection('bookings').doc(bookingId).get();
 
     return successResponse(
@@ -550,21 +504,13 @@ exports.rescheduleBooking = async (req, res) => {
     const { bookingId } = req.params;
     const { scheduledDate, scheduledTime, reason } = req.body;
 
-    // Fetch booking
     const bookingDoc = await db.collection('bookings').doc(bookingId).get();
-
-    if (!bookingDoc.exists) {
-      return errorResponse(res, 'Booking not found', 404);
-    }
+    if (!bookingDoc.exists) return errorResponse(res, 'Booking not found', 404);
 
     const booking = bookingDoc.data();
 
-    // Only allow customer to reschedule their own bookings
-    if (booking.customerId !== uid) {
-      return errorResponse(res, 'Booking not found', 404);
-    }
+    if (booking.customerId !== uid) return errorResponse(res, 'Booking not found', 404);
 
-    // Can only reschedule pending or confirmed bookings
     if (!['pending', 'confirmed'].includes(booking.status)) {
       return errorResponse(
         res,
@@ -573,84 +519,26 @@ exports.rescheduleBooking = async (req, res) => {
       );
     }
 
-    // --- Check 2-day minimum notice rule ---
+    // 2-day minimum notice rule
     const now = new Date();
     const currentScheduled = new Date(`${booking.scheduledDate}T${booking.scheduledTime}`);
-    const twoDaysInMs = 2 * 24 * 60 * 60 * 1000;
     const timeUntilBooking = currentScheduled - now;
 
-    if (timeUntilBooking < twoDaysInMs) {
+    if (timeUntilBooking < 2 * 24 * 60 * 60 * 1000) {
       return errorResponse(
         res,
-        'Cannot reschedule. Bookings must be rescheduled at least 2 days (48 hours) before the scheduled time.',
+        'Cannot reschedule. Bookings must be rescheduled at least 48 hours before the scheduled time.',
         400
       );
     }
 
-    // --- Validate new scheduled date is not in the past ---
     const newBookingDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
     if (newBookingDateTime <= now) {
       return errorResponse(res, 'Cannot reschedule to a past date or time', 400);
     }
 
-    // --- Validate provider working hours for new time ---
-    const providerDoc = await db.collection('providers').doc(booking.providerId).get();
-    if (!providerDoc.exists) {
-      return errorResponse(res, 'Provider not found', 404);
-    }
-
-    const provider = providerDoc.data();
-    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-    const newBookingDate = new Date(scheduledDate);
-    const dayOfWeek = dayNames[newBookingDate.getDay()];
-    const daySchedule = provider.workingHours[dayOfWeek];
-
-    if (!daySchedule || daySchedule.open === 'closed') {
-      return errorResponse(
-        res,
-        `${provider.displayName} is not available on ${dayOfWeek.charAt(0).toUpperCase() + dayOfWeek.slice(1)}`,
-        400
-      );
-    }
-
-    if (scheduledTime < daySchedule.open || scheduledTime >= daySchedule.close) {
-      return errorResponse(
-        res,
-        `${provider.displayName} works from ${daySchedule.open} to ${daySchedule.close} on ${dayOfWeek.charAt(0).toUpperCase() + dayOfWeek.slice(1)}`,
-        400
-      );
-    }
-
-    // --- Check for provider conflicts at the new time ---
-    const conflictCheck = await db
-      .collection('bookings')
-      .where('providerId', '==', booking.providerId)
-      .where('scheduledDate', '==', scheduledDate)
-      .where('status', 'in', ['pending', 'confirmed', 'in_progress'])
-      .get();
-
-    for (const doc of conflictCheck.docs) {
-      // Skip the current booking being rescheduled
-      if (doc.id === bookingId) continue;
-
-      const existing = doc.data();
-      const existingStart = existing.scheduledTime;
-      const existingEnd = addMinutes(existingStart, existing.duration);
-      const newEnd = addMinutes(scheduledTime, booking.duration);
-
-      // Check overlap
-      if (scheduledTime < existingEnd && newEnd > existingStart) {
-        return errorResponse(
-          res,
-          'Provider is already booked at this time. Please choose another time.',
-          400
-        );
-      }
-    }
-
-    // --- Update booking ---
     const updatedStatusHistory = [
-      ...booking.statusHistory,
+      ...(booking.statusHistory || []),
       {
         status: 'rescheduled',
         oldDate: booking.scheduledDate,
@@ -664,23 +552,22 @@ exports.rescheduleBooking = async (req, res) => {
     ];
 
     await db.collection('bookings').doc(bookingId).update({
-      scheduledDate: scheduledDate,
-      scheduledTime: scheduledTime,
+      scheduledDate,
+      scheduledTime,
       statusHistory: updatedStatusHistory,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-    // Send reschedule notification
+
     try {
       await notifyBookingRescheduled(
         { id: bookingId, scheduledDate, scheduledTime, ...booking },
-        booking.scheduledDate, // Old Date
-        booking.scheduledTime  // Old Time
+        booking.scheduledDate,
+        booking.scheduledTime
       );
     } catch (notifyError) {
       console.error('Reschedule notification failed:', notifyError);
     }
 
-    // Fetch updated booking
     const updatedDoc = await db.collection('bookings').doc(bookingId).get();
 
     return successResponse(

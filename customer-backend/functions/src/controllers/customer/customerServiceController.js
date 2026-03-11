@@ -101,6 +101,8 @@ exports.getServices = async (req, res) => {
           area: provider.area,
           location: provider.location,
         };
+      } else {
+        service.provider = null;
       }
       result.push(service);
     }
@@ -291,6 +293,8 @@ exports.getServiceDetails = async (req, res) => {
     const providerDoc = await db.collection('providers').doc(service.providerId).get();
     if (providerDoc.exists) {
       service.provider = { uid: providerDoc.id, ...providerDoc.data() };
+    } else {
+      service.provider = null;
     }
 
     // Attach category

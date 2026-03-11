@@ -106,7 +106,7 @@ router.get('/bookings', verifyToken, customerBookingController.getBookings);
 router.get('/bookings/:bookingId', verifyToken, customerBookingController.getBookingDetails);
 router.patch('/bookings/:bookingId/cancel', verifyToken, cancelBookingValidationRules, validate, customerBookingController.cancelBooking);
 router.patch('/bookings/:bookingId/reschedule', verifyToken, rescheduleBookingValidationRules, validate, customerBookingController.rescheduleBooking);
-
+router.get('/addresses/:addressId', verifyToken, customerProfileController.getAddressById);
 // ─── Payment routes ───────────────────────────────────────────────────────────
 router.post('/payments/hash', verifyToken, customerPaymentController.generatePaymentHash);
 router.get('/payments/status/:bookingId', verifyToken, customerPaymentController.getPaymentStatus);

@@ -15,4 +15,7 @@ router.use('/bookings', bookingRoutes);
 router.use('/users', userRoutes);
 router.use('/services', serviceRoutes);
 
+//Booking routes
+router.patch('/bookings/:bookingId/start',    authenticate, bookingController.startBooking);
+router.patch('/bookings/:bookingId/complete', authenticate, bookingController.completeBooking);
 module.exports = router;

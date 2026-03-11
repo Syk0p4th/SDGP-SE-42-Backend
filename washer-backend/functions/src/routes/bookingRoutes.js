@@ -1,32 +1,23 @@
-/* eslint-disable max-len */
 const express = require('express');
-// eslint-disable-next-line new-cap
 const router = express.Router();
 const bookingController = require('../controllers/bookingController');
-const { authenticate, isStaff, isWasher } = require('../middleware/auth');
+const { authenticate } = require('../middleware/auth');
 
-/**
- * @swagger
- * tags:
- *   name: Bookings
- *   description: Booking management
- */
+// ── CRUD ──────────────────────────────────────────────────────────────────────
+router.post('/',       authenticate, bookingController.createBooking);
+router.get('/',        authenticate, bookingController.getBookings);
+router.get('/stats',   authenticate, bookingController.getBookingStats);
+router.get('/:id',     authenticate, bookingController.getBookingById);
+router.patch('/:id',   authenticate, bookingController.updateBooking);
+router.delete('/:id',  authenticate, bookingController.cancelBooking);
 
-// All booking routes require authentication
-router.use(authenticate);
+// ── Status transitions ────────────────────────────────────────────────────────
+router.patch('/:id/accept',   authenticate, bookingController.acceptBooking);
+router.patch('/:id/decline',  authenticate, bookingController.declineBooking);
+router.patch('/:id/start',    authenticate, bookingController.startService);
+router.patch('/:id/complete', authenticate, bookingController.completeService);
 
-// Get booking statistics (staff/admin only)
-router.get('/stats', isStaff, bookingController.getBookingStats);
-
-// Washer accept/decline wash requests
-router.post('/:id/accept', isWasher, bookingController.acceptWash);
-router.post('/:id/decline', isWasher, bookingController.declineWash);
-
-// CRUD operations
-router.post('/', bookingController.createBooking);
-router.get('/', bookingController.getBookings);
-router.get('/:id', bookingController.getBookingById);
-router.patch('/:id', bookingController.updateBooking);
-router.delete('/:id', bookingController.cancelBooking);
+// ── Customer cancel (alternative explicit route) ──────────────────────────────
+router.patch('/:id/cancel',   authenticate, bookingController.cancelBooking);
 
 module.exports = router;

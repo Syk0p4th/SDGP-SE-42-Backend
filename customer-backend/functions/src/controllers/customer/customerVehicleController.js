@@ -93,7 +93,7 @@ exports.getVehicleDetails = async (req, res) => {
 exports.addVehicle = async (req, res) => {
   try {
     const { uid } = req.user;
-    const { make, model, year, color, licensePlate, nickname } = req.body;
+    const { make, model, year, color, licensePlate, nickname , type } = req.body;
 
     // Check if license plate already exists for this customer
     const existingSnapshot = await db
@@ -112,6 +112,7 @@ exports.addVehicle = async (req, res) => {
       make,
       model,
       year: Number(year),
+      type: type || null,
       color,
       licensePlate,
       nickname: nickname || `${make} ${model}`,
@@ -149,7 +150,7 @@ exports.updateVehicle = async (req, res) => {
   try {
     const { uid } = req.user;
     const { vehicleId } = req.params;
-    const { make, model, year, color, licensePlate, nickname } = req.body;
+    const { make, model, year, color, licensePlate, nickname, type } = req.body;
 
     const vehicleRef = db
       .collection('customers')
@@ -185,6 +186,7 @@ exports.updateVehicle = async (req, res) => {
     if (color !== undefined) updates.color = color;
     if (licensePlate !== undefined) updates.licensePlate = licensePlate;
     if (nickname !== undefined) updates.nickname = nickname;
+    if (type !== undefined) updates.type = type;
     updates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
     await vehicleRef.update(updates);

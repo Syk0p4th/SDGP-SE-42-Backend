@@ -281,6 +281,41 @@ exports.deleteAddress = async (req, res) => {
  * Set Default Address
  * Set an address as the default
  */
+/**
+ * Get Address By ID
+ * Get a single address by its ID
+ */
+exports.getAddressById = async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const { addressId } = req.params;
+
+    console.log(`Fetching address ${addressId} for user: ${uid}`);
+
+    const addressRef = db
+      .collection('customers')
+      .doc(uid)
+      .collection('addresses')
+      .doc(addressId);
+
+    const addressDoc = await addressRef.get();
+
+    if (!addressDoc.exists) {
+      return errorResponse(res, 'Address not found', 404);
+    }
+
+    return successResponse(
+      res,
+      { id: addressDoc.id, ...addressDoc.data() },
+      'Address retrieved successfully'
+    );
+
+  } catch (error) {
+    console.error('Get address by ID error:', error);
+    return errorResponse(res, 'Failed to get address', 500);
+  }
+};
+
 exports.setDefaultAddress = async (req, res) => {
   try {
     const uid = req.user.uid;
@@ -315,7 +350,7 @@ exports.setDefaultAddress = async (req, res) => {
     });
 
     // Set this address as default
-    batch.update(addressRef, { 
+    batch.update(addressRef, {
       isDefault: true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
