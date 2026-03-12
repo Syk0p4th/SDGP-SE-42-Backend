@@ -1,6 +1,5 @@
 /* eslint-disable max-len */
 const Sentry = require('@sentry/node');
-const { ProfilingIntegration } = require('@sentry/profiling-node');
 
 /**
  * Initialize Sentry for error tracking
@@ -23,12 +22,6 @@ function initSentry() {
 
     // Performance Monitoring
     tracesSampleRate: environment === 'production' ? 0.1 : 1.0,
-
-    // Profiling
-    profilesSampleRate: environment === 'production' ? 0.1 : 1.0,
-    integrations: [
-      new ProfilingIntegration()
-    ],
 
     // Release tracking
     release: process.env.SENTRY_RELEASE || 'washer-backend@1.0.0',
@@ -153,25 +146,25 @@ function addBreadcrumb(breadcrumb) {
  * Express error handler middleware
  * Should be added after all other middleware and routes
  */
-const sentryErrorHandler = Sentry.Handlers.errorHandler({
-  shouldHandleError(error) {
-    // Capture all errors with status code 500 or higher
-    return !error.statusCode || error.statusCode >= 500;
-  }
-});
+function sentryErrorHandler(err, req, res, next) {
+  Sentry.captureException(err);
+  next(err);
+}
 
 /**
  * Express request handler middleware
  * Should be added early in the middleware chain
  */
-const sentryRequestHandler = Sentry.Handlers.requestHandler({
-  user: ['id', 'email', 'username']
-});
+function sentryRequestHandler(req, res, next) {
+  next();
+}
 
 /**
  * Express tracing handler for performance monitoring
  */
-const sentryTracingHandler = Sentry.Handlers.tracingHandler();
+function sentryTracingHandler(req, res, next) {
+  next();
+}
 
 module.exports = {
   initSentry,
