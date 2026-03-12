@@ -15,6 +15,7 @@ const asyncHandler = (fn) => (req, res, next) => {
 const BOOKING_STATUS = {
   PENDING: 'pending',
   CONFIRMED: 'confirmed',
+  ARRIVED: 'arrived',
   IN_PROGRESS: 'in_progress',
   COMPLETED: 'completed',
   CANCELLED: 'cancelled',

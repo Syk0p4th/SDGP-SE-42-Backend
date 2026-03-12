@@ -14,6 +14,7 @@ router.delete('/:id',  authenticate, bookingController.cancelBooking);
 // ── Status transitions ────────────────────────────────────────────────────────
 router.patch('/:id/accept',   authenticate, bookingController.acceptBooking);
 router.patch('/:id/decline',  authenticate, bookingController.declineBooking);
+router.patch('/:id/arrive',   authenticate, bookingController.arriveBooking);
 router.patch('/:id/start',    authenticate, bookingController.startService);
 router.patch('/:id/complete', authenticate, bookingController.completeService);
 

@@ -26,6 +26,7 @@ const BOOKING_STATUS = {
   ACCEPTED: 'accepted',
   DECLINED: 'declined',
   CONFIRMED: 'confirmed',
+  ARRIVED: 'arrived',
   IN_PROGRESS: 'in_progress',
   COMPLETED: 'completed',
   CANCELLED: 'cancelled'

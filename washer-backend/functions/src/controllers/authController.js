@@ -562,6 +562,7 @@ exports.updateProfile = async (req, res) => {
     if (phoneNumber) updates.phoneNumber = phoneNumber;
     if (serviceAreas) updates.serviceAreas = serviceAreas;
     if (workingHours) updates.workingHours = workingHours;
+    if (req.body.agreement !== undefined) updates.agreement = Boolean(req.body.agreement);
 
     await getDb().collection(COLLECTIONS.PROVIDERS).doc(uid).update(updates);
 

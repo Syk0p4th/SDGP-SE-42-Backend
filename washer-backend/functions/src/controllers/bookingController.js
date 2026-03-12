@@ -418,6 +418,50 @@ exports.declineBooking = asyncHandler(async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ARRIVE AT BOOKING
+// PATCH /bookings/:id/arrive
+// ─────────────────────────────────────────────────────────────────────────────
+exports.arriveBooking = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const bookingDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
+  if (!bookingDoc.exists) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+
+  const booking = bookingDoc.data();
+
+  if (booking.providerId !== req.user.uid) {
+    throw new AppError('Not authorized to access this booking', 403, 'FORBIDDEN');
+  }
+
+  if (booking.status !== BOOKING_STATUS.CONFIRMED) {
+    throw new AppError(
+      `Cannot mark as arrived. Current status: "${booking.status}". Validation expects "confirmed".`,
+      400,
+      'INVALID_STATUS'
+    );
+  }
+
+  const updatedStatusHistory = [
+    ...(booking.statusHistory || []),
+    { status: BOOKING_STATUS.ARRIVED, updatedAt: new Date().toISOString(), updatedBy: 'provider' },
+  ];
+
+  await db.collection(COLLECTIONS.BOOKINGS).doc(id).update({
+    status: BOOKING_STATUS.ARRIVED,
+    arrivedAt: admin.firestore.FieldValue.serverTimestamp(),
+    statusHistory: updatedStatusHistory,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  logger.info('Provider arrived', { bookingId: id, providerId: req.user.uid });
+
+  const updatedDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
+  await safeNotify(notificationService.notifyBookingStatusChange, id, booking.customerId, 'arrived');
+
+  res.status(200).json({ success: true, message: 'Marked arrived. Customer notified.' });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // START SERVICE
 // PATCH /bookings/:id/start
 // ─────────────────────────────────────────────────────────────────────────────
@@ -433,7 +477,7 @@ exports.startService = asyncHandler(async (req, res) => {
     throw new AppError('Not authorized to start this booking', 403, 'FORBIDDEN');
   }
 
-  if (booking.status !== BOOKING_STATUS.CONFIRMED) {
+  if (![BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.ARRIVED].includes(booking.status)) {
     throw new AppError(
       `Cannot start service. Current status: "${booking.status}".`,
       400,

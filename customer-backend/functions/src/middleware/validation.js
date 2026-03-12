@@ -123,6 +123,10 @@ const updateProfileValidationRules = [
     .optional()
     .isLength({ max: 500 })
     .withMessage('Bio must be less than 500 characters'),
+  body('agreement')
+    .optional()
+    .isBoolean()
+    .withMessage('Agreement must be a boolean'),
 ];
 
 // ============================================================

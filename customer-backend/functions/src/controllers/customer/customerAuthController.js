@@ -910,6 +910,10 @@ exports.updateProfile = async (req, res) => {
       updates.bio = bio || null;
     }
 
+    if (req.body.agreement !== undefined) {
+      updates.agreement = Boolean(req.body.agreement);
+    }
+
     if (Object.keys(updates).length === 0) {
       return errorResponse(res, 'No fields to update', 400);
     }
