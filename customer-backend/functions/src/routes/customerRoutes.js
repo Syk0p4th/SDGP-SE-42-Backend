@@ -83,6 +83,7 @@ router.delete('/vehicles/:vehicleId', verifyToken, customerVehicleController.del
 router.get('/subscriptions/plans', customerSubscriptionController.getPlans);
 router.get('/subscriptions', verifyToken, customerSubscriptionController.getSubscriptions);
 router.post('/subscriptions', verifyToken, subscribeValidationRules, validate, customerSubscriptionController.initiateSubscription);
+router.patch('/subscriptions/:subscriptionId/activate', verifyToken, customerSubscriptionController.activateSubscriptionFallback);
 router.patch('/subscriptions/:subscriptionId/cancel', verifyToken, cancelSubscriptionValidationRules, validate, customerSubscriptionController.cancelSubscription);
 
 // Notifications

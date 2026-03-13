@@ -214,6 +214,9 @@ exports.subscriptionPaymentNotify = async (req, res) => {
       // Notify customer via FCM
       const sub = subDoc.data();
       await notifyCustomer(sub.customerId, subscriptionId, sub.planName);
+      
+      // Update customer document with current subscription status
+      await updateCustomerSubscriptionStatus(sub.customerId);
     } else {
       // Payment failed — delete pending subscription
       await subRef.update({
@@ -227,6 +230,45 @@ exports.subscriptionPaymentNotify = async (req, res) => {
   } catch (error) {
     console.error('Subscription notify error:', error);
     return res.sendStatus(500);
+  }
+};
+
+// ============================================================
+// MANUAL FALLBACK SUBSCRIPTION ACTIVATION
+// PATCH /subscriptions/:subscriptionId/activate
+// ============================================================
+exports.activateSubscriptionFallback = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const { subscriptionId } = req.params;
+
+    const subRef = db.collection('subscriptions').doc(subscriptionId);
+    const subDoc = await subRef.get();
+    
+    if (!subDoc.exists) return errorResponse(res, 'Subscription not found', 404);
+    
+    const subscription = subDoc.data();
+    if (subscription.customerId !== uid) return errorResponse(res, 'Subscription not found', 404);
+    if (subscription.status === 'active') return successResponse(res, { subscription: { id: subDoc.id, ...subDoc.data() } }, 'Subscription is already active');
+    
+    // Safety check: is it in pending status?
+    if (subscription.status !== 'pending') return errorResponse(res, 'Cannot activate subscription in current state', 400);
+
+    await subRef.update({
+      status: 'active',
+      paymentStatus: 'paid_fallback', // indicated frontend fallback triggered this
+      activatedAt: new Date().toISOString(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Notify customer via FCM
+    await notifyCustomer(subscription.customerId, subscriptionId, subscription.planName);
+
+    const updatedDoc = await subRef.get();
+    return successResponse(res, { subscription: { id: updatedDoc.id, ...updatedDoc.data() } }, 'Subscription activated successfully');
+  } catch (error) {
+    console.error('Activate subscription fallback error:', error);
+    return errorResponse(res, 'Failed to activate subscription', 500);
   }
 };
 
@@ -254,6 +296,9 @@ exports.cancelSubscription = async (req, res) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
+    // Update customer document with current subscription status
+    await updateCustomerSubscriptionStatus(uid);
+
     const updatedDoc = await db.collection('subscriptions').doc(subscriptionId).get();
     return successResponse(res, { subscription: { id: updatedDoc.id, ...updatedDoc.data() } }, 'Subscription cancelled successfully');
   } catch (error) {
@@ -275,14 +320,22 @@ exports.expireSubscriptions = async (req, res) => {
       .get();
 
     const batch = db.batch();
+    const customerIdsToUpdate = new Set();
     snapshot.docs.forEach((doc) => {
       batch.update(doc.ref, {
         status: 'expired',
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
+      customerIdsToUpdate.add(doc.data().customerId);
     });
 
     await batch.commit();
+    
+    // Update customer document for each affected customer
+    for (const customerId of customerIdsToUpdate) {
+      await updateCustomerSubscriptionStatus(customerId);
+    }
+
     return successResponse(res, { expired: snapshot.size }, `${snapshot.size} subscriptions expired`);
   } catch (error) {
     console.error('Expire subscriptions error:', error);
@@ -321,5 +374,35 @@ async function notifyCustomer(customerId, subscriptionId, planName) {
     });
   } catch (error) {
     console.error('Notify customer error:', error);
+  }
+}
+
+// ── Update Customer Subscription Status ────────────────────────────────────
+async function updateCustomerSubscriptionStatus(customerId) {
+  try {
+    const activeSubsSnap = await db.collection('subscriptions')
+      .where('customerId', '==', customerId)
+      .where('status', '==', 'active')
+      .get();
+      
+    let isSubscribed = false;
+    let subscription = 'none';
+
+    if (!activeSubsSnap.empty) {
+      isSubscribed = true;
+      // Get the first active subscription's plan name, default to 'active'
+      const firstActivePlan = activeSubsSnap.docs[0].data().planName;
+      subscription = firstActivePlan ? firstActivePlan.toLowerCase() : 'active';
+    }
+
+    await db.collection('customers').doc(customerId).update({
+      isSubscribed,
+      subscription,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    
+    console.log(`Updated subscription status for customer ${customerId}: isSubscribed=${isSubscribed}, plan=${subscription}`);
+  } catch (error) {
+    console.error(`Error updating subscription status for customer ${customerId}:`, error);
   }
 }
