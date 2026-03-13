@@ -49,8 +49,8 @@ exports.register = async (req, res) => {
     });
 
     await getAuth().setCustomUserClaims(userRecord.uid, {
-      role: 'provider',
-      userType: 'provider'
+      role: 'washer',
+      userType: 'washer'
     });
 
     let certificationStatus = 'uncertified';
@@ -66,7 +66,7 @@ exports.register = async (req, res) => {
       email,
       displayName,
       phoneNumber,
-      role: 'provider',
+      role: 'washer',
       serviceAreas: serviceAreas || [],
       totalJobs: 0,
       rating: 0,
@@ -139,8 +139,8 @@ exports.register = async (req, res) => {
     await getDb().collection(COLLECTIONS.PROVIDERS).doc(userRecord.uid).set(providerData);
 
     const customToken = await getAuth().createCustomToken(userRecord.uid, {
-      role: 'provider',
-      userType: 'provider'
+      role: 'washer',
+      userType: 'washer'
     });
 
     let message = 'Washer registered successfully. ';
@@ -211,8 +211,8 @@ exports.login = async (req, res) => {
     const providerData = providerDoc.data();
 
     const customToken = await getAuth().createCustomToken(userRecord.uid, {
-      role: 'provider',
-      userType: 'provider'
+      role: 'washer',
+      userType: 'washer'
     });
 
     await getDb().collection(COLLECTIONS.PROVIDERS).doc(userRecord.uid).update({
