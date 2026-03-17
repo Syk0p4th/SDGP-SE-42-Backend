@@ -16,6 +16,7 @@ const { authenticate, isAdmin } = require('../middleware/auth');
 router.post('/register', authController.register);
 router.post('/login', authController.login);
 router.post('/signin', authController.loginWasher);
+router.post('/signout', authenticate, authController.signOut);
 
 // Washer routes
 router.post('/washer/register', authController.registerWasher);

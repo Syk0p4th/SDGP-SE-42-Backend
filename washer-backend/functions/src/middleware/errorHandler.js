@@ -46,7 +46,7 @@ const errorHandler = (err, req, res, next) => {
   }
 
   // Firebase specific errors
-  if (err.code && err.code.startsWith('auth/')) {
+  if (err.code && typeof err.code === 'string' && err.code.startsWith('auth/')) {
     error = handleFirebaseAuthError(err);
   }
 

@@ -7,8 +7,8 @@
     "node": "20"
   },
   "scripts": {
-    "start": "npx -y kill-port 3001 || true && nodemon src/index.js",
-    "dev": "npx -y kill-port 3001 || true && nodemon src/index.js",
+    "start": "nodemon src/index.js",
+    "dev": "nodemon src/index.js",
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log"

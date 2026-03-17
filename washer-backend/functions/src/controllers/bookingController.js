@@ -1,626 +1,752 @@
 /* eslint-disable max-len */
-const admin = require('firebase-admin');
 const { db } = require('../config/firebase');
+const admin = require('firebase-admin');
 const { AppError, asyncHandler } = require('../middleware/errorHandler');
-const { COLLECTIONS, BOOKING_STATUS, ROLES } = require('../utils/constants');
+const { ROLES, USER_STATUS, WASHER_STATUS, COLLECTIONS } = require('../utils/constants');
 const logger = require('../config/logger');
-const notificationService = require('../services/notificationService');
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HELPER: safe notification (non-fatal)
-// ─────────────────────────────────────────────────────────────────────────────
-async function safeNotify(fn, ...args) {
+// Always get auth from admin directly to avoid stale references
+const getAuth = () => admin.auth();
+const getDb = () => db;
+
+/**
+ * Register a new washer
+ * POST /auth/register
+ */
+exports.register = async (req, res) => {
   try {
-    await fn(...args);
-  } catch (err) {
-    logger.warn('Notification failed (non-fatal)', { error: err.message });
-  }
-}
+    const {
+      email,
+      password,
+      displayName,
+      phoneNumber,
+      serviceAreas,
+      hasExperience,
+      certificationPath,
+      professionalExperience
+    } = req.body;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CREATE BOOKING
-// POST /bookings
-// ─────────────────────────────────────────────────────────────────────────────
-exports.createBooking = asyncHandler(async (req, res) => {
-  const { serviceId, vehicleId, scheduledAt, addressSnapshot, notes } = req.body;
-
-  if (!serviceId || !scheduledAt) {
-    throw new AppError('Service ID and scheduled time are required', 400, 'VALIDATION_ERROR');
-  }
-
-  const serviceDoc = await db.collection(COLLECTIONS.SERVICES).doc(serviceId).get();
-  if (!serviceDoc.exists) throw new AppError('Service not found', 404, 'SERVICE_NOT_FOUND');
-
-  const serviceData = serviceDoc.data();
-  if (!serviceData.isActive) throw new AppError('Service is currently unavailable', 400, 'SERVICE_UNAVAILABLE');
-
-  let vehicleSnapshot = null;
-  if (vehicleId) {
-    const vehicleDoc = await db
-      .collection(COLLECTIONS.USERS)
-      .doc(req.user.uid)
-      .collection(COLLECTIONS.VEHICLES)
-      .doc(vehicleId)
-      .get();
-
-    if (vehicleDoc.exists) {
-      const v = vehicleDoc.data();
-      vehicleSnapshot = { type: v.type, plateNumber: v.plateNumber, nickname: v.nickname };
+    if (!email || !password || !displayName || !phoneNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email, password, display name, and phone number are required',
+      });
     }
+
+    if (hasExperience === false && !certificationPath) {
+      return res.status(400).json({
+        success: false,
+        message: 'Certification path is required for new washers',
+      });
+    }
+
+    const userRecord = await getAuth().createUser({
+      email,
+      password,
+      displayName,
+      phoneNumber,
+      emailVerified: false
+    });
+
+    await getAuth().setCustomUserClaims(userRecord.uid, {
+      role: 'washer',
+      userType: 'washer'
+    });
+
+    let certificationStatus = 'uncertified';
+
+    if (hasExperience === true && professionalExperience) {
+      certificationStatus = 'pending_certification';
+    } else if (certificationPath) {
+      certificationStatus = 'pending_certification';
+    }
+
+    const providerData = {
+      uid: userRecord.uid,
+      email,
+      displayName,
+      phoneNumber,
+      role: 'washer',
+      serviceAreas: serviceAreas || [],
+      totalJobs: 0,
+      rating: 0,
+      reviewCount: 0,
+      totalBookings: 0,
+      certificationStatus,
+      certificationPath: certificationPath || null,
+      isActive: false,
+      isVerified: false,
+      availability: false,
+      workingHours: {
+        monday: { open: '08:00', close: '18:00' },
+        tuesday: { open: '08:00', close: '18:00' },
+        wednesday: { open: '08:00', close: '18:00' },
+        thursday: { open: '08:00', close: '18:00' },
+        friday: { open: '08:00', close: '18:00' },
+        saturday: { open: '09:00', close: '17:00' },
+        sunday: { open: 'closed', close: 'closed' },
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (hasExperience === true && professionalExperience) {
+      providerData.professionalExperience = {
+        hasExperience: true,
+        currentWorkplace: professionalExperience.currentWorkplace || null,
+        yearsOfExperience: professionalExperience.yearsOfExperience || 0,
+        references: professionalExperience.references || [],
+        documents: professionalExperience.documents || [],
+        submittedAt: new Date().toISOString(),
+      };
+    } else {
+      providerData.professionalExperience = null;
+    }
+
+    if (certificationPath === 'field_certification') {
+      providerData.fieldCertification = {
+        requiredEvaluations: 6,
+        completedEvaluations: 0,
+        evaluations: [],
+        assignedMentors: [],
+        startedAt: new Date().toISOString(),
+        status: 'pending_mentor_assignment',
+      };
+    } else {
+      providerData.fieldCertification = null;
+    }
+
+    if (certificationPath === 'training_center') {
+      providerData.trainingCenter = {
+        centerId: null,
+        centerName: null,
+        assignedAt: null,
+        expectedCompletionDate: null,
+        status: 'pending_assignment',
+        finalEvaluation: null,
+      };
+    } else {
+      providerData.trainingCenter = null;
+    }
+
+    providerData.certificationReview = {
+      reviewedBy: null,
+      reviewedAt: null,
+      status: 'pending',
+      adminNotes: null,
+    };
+
+    await getDb().collection(COLLECTIONS.PROVIDERS).doc(userRecord.uid).set(providerData);
+
+    const customToken = await getAuth().createCustomToken(userRecord.uid, {
+      role: 'washer',
+      userType: 'washer'
+    });
+
+    let message = 'Washer registered successfully. ';
+    if (hasExperience === true) {
+      message += 'Your professional experience is under review.';
+    } else if (certificationPath === 'field_certification') {
+      message += 'You will be assigned mentors for field certification.';
+    } else if (certificationPath === 'training_center') {
+      message += 'You will be assigned to a training center.';
+    }
+
+    res.status(201).json({
+      success: true,
+      message,
+      data: {
+        uid: userRecord.uid,
+        email: providerData.email,
+        displayName: providerData.displayName,
+        token: customToken,
+        certificationStatus: providerData.certificationStatus,
+        certificationPath: providerData.certificationPath,
+      }
+    });
+
+  } catch (error) {
+    console.error('Register error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to register washer',
+    });
+  }
+};
+
+/**
+ * Login user
+ * POST /auth/login
+ */
+exports.login = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required',
+      });
+    }
+
+    let userRecord;
+    try {
+      userRecord = await getAuth().getUserByEmail(email);
+    } catch (error) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    const providerDoc = await getDb().collection(COLLECTIONS.PROVIDERS).doc(userRecord.uid).get();
+
+    if (!providerDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        message: 'Provider profile not found',
+      });
+    }
+
+    const providerData = providerDoc.data();
+
+    const customToken = await getAuth().createCustomToken(userRecord.uid, {
+      role: 'washer',
+      userType: 'washer'
+    });
+
+    await getDb().collection(COLLECTIONS.PROVIDERS).doc(userRecord.uid).update({
+      lastLoginAt: new Date().toISOString(),
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      data: {
+        token: customToken,
+        user: {
+          uid: userRecord.uid,
+          email: providerData.email,
+          displayName: providerData.displayName,
+          certificationStatus: providerData.certificationStatus,
+          isActive: providerData.isActive,
+          isVerified: providerData.isVerified,
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to login',
+    });
+  }
+};
+
+/**
+ * Register a new washer with certification flow
+ * POST /auth/washer/register
+ */
+exports.registerWasher = asyncHandler(async (req, res) => {
+  const {
+    email,
+    password,
+    displayName,
+    phoneNumber,
+    serviceAreas,
+    hasExperience,
+    certificationPath,
+    professionalExperience
+  } = req.body;
+
+  if (!email || !password || !displayName || !phoneNumber) {
+    throw new AppError('Email, password, display name, and phone number are required', 400, 'VALIDATION_ERROR');
   }
 
-  let calculatedPrice = serviceData.basePrice;
-  if (vehicleSnapshot && serviceData.vehicleTypePricing?.[vehicleSnapshot.type]) {
-    calculatedPrice = serviceData.vehicleTypePricing[vehicleSnapshot.type];
+  if (hasExperience === false && !certificationPath) {
+    throw new AppError('Certification path is required for new washers', 400, 'VALIDATION_ERROR');
   }
 
-  const bookingData = {
-    customerId: req.user.uid,
-    customerName: req.user.displayName,
-    customerEmail: req.user.email,
-    customerPhone: req.user.phoneNumber || null,
-    serviceId,
-    serviceSnapshot: {
-      name: serviceData.name,
-      durationMin: serviceData.durationMin,
-      priceAtBooking: calculatedPrice,
-      description: serviceData.description,
+  if (certificationPath && !['field_certification', 'training_center'].includes(certificationPath)) {
+    throw new AppError('Invalid certification path. Must be field_certification or training_center', 400, 'VALIDATION_ERROR');
+  }
+
+  const userRecord = await getAuth().createUser({
+    email,
+    password,
+    displayName,
+    phoneNumber,
+    emailVerified: false
+  });
+
+  let certificationStatus = 'uncertified';
+  let washerStatus = WASHER_STATUS.PENDING_APPROVAL;
+
+  if (hasExperience === true && professionalExperience) {
+    certificationStatus = 'pending_certification';
+    washerStatus = WASHER_STATUS.PENDING_APPROVAL;
+  } else if (certificationPath) {
+    certificationStatus = 'pending_certification';
+    washerStatus = WASHER_STATUS.PENDING_APPROVAL;
+  }
+
+  const providerData = {
+    uid: userRecord.uid,
+    email,
+    displayName,
+    phoneNumber,
+    role: ROLES.WASHER,
+    status: USER_STATUS.ACTIVE,
+    washerStatus,
+    certificationStatus,
+    certificationPath: certificationPath || null,
+    serviceAreas: serviceAreas || [],
+    totalJobs: 0,
+    rating: 0,
+    reviewCount: 0,
+    totalBookings: 0,
+    availability: false,
+    isActive: false,
+    isVerified: false,
+    workingHours: {
+      monday: { open: '08:00', close: '18:00' },
+      tuesday: { open: '08:00', close: '18:00' },
+      wednesday: { open: '08:00', close: '18:00' },
+      thursday: { open: '08:00', close: '18:00' },
+      friday: { open: '08:00', close: '18:00' },
+      saturday: { open: '09:00', close: '17:00' },
+      sunday: { open: 'closed', close: 'closed' },
     },
-    vehicleId: vehicleId || null,
-    vehicleSnapshot,
-    scheduledAt,
-    addressSnapshot: addressSnapshot || null,
-    status: BOOKING_STATUS.PENDING,
-    assignedStaffId: null,
-    assignedStaffName: null,
-    notes: notes || '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    startedAt: null,
-    completedAt: null,
-    cancellationReason: null,
-    cancelledBy: null,
+    lastLoginAt: null,
   };
 
-  const bookingRef = await db.collection(COLLECTIONS.BOOKINGS).add(bookingData);
+  if (hasExperience === true && professionalExperience) {
+    providerData.professionalExperience = {
+      hasExperience: true,
+      currentWorkplace: professionalExperience.currentWorkplace || null,
+      yearsOfExperience: professionalExperience.yearsOfExperience || 0,
+      references: professionalExperience.references || [],
+      documents: professionalExperience.documents || [],
+      submittedAt: new Date().toISOString(),
+    };
+  } else {
+    providerData.professionalExperience = null;
+  }
 
-  logger.info('Booking created', { bookingId: bookingRef.id, customerId: req.user.uid, serviceId });
+  if (certificationPath === 'field_certification') {
+    providerData.fieldCertification = {
+      requiredEvaluations: 6,
+      completedEvaluations: 0,
+      evaluations: [],
+      assignedMentors: [],
+      startedAt: new Date().toISOString(),
+      status: 'pending_mentor_assignment',
+    };
+  } else {
+    providerData.fieldCertification = null;
+  }
 
-  await safeNotify(notificationService.notifyNewBooking, bookingRef.id, bookingData);
+  if (certificationPath === 'training_center') {
+    providerData.trainingCenter = {
+      centerId: null,
+      centerName: null,
+      assignedAt: null,
+      expectedCompletionDate: null,
+      status: 'pending_assignment',
+      finalEvaluation: null,
+    };
+  } else {
+    providerData.trainingCenter = null;
+  }
+
+  providerData.certificationReview = {
+    reviewedBy: null,
+    reviewedAt: null,
+    status: 'pending',
+    adminNotes: null,
+  };
+
+  await getDb().collection(COLLECTIONS.PROVIDERS).doc(userRecord.uid).set(providerData);
+
+  logger.logAuth('register_washer', userRecord.uid, true);
+  logger.info('Washer registered successfully', {
+    uid: userRecord.uid,
+    email,
+    hasExperience,
+    certificationPath,
+    certificationStatus,
+    collection: 'providers'
+  });
+
+  let message = 'Washer registered successfully. ';
+  if (hasExperience === true) {
+    message += 'Your professional experience is under review by our admin team.';
+  } else if (certificationPath === 'field_certification') {
+    message += 'You will be assigned mentors for field certification. Complete 6 job evaluations to get certified.';
+  } else if (certificationPath === 'training_center') {
+    message += 'You will be assigned to a training center. Our admin team will contact you shortly.';
+  } else {
+    message += 'Your account is pending approval.';
+  }
 
   res.status(201).json({
     success: true,
-    message: 'Booking created successfully',
-    booking: { id: bookingRef.id, ...bookingData },
+    message,
+    user: {
+      uid: userRecord.uid,
+      email: providerData.email,
+      displayName: providerData.displayName,
+      role: providerData.role,
+      washerStatus: providerData.washerStatus,
+      certificationStatus: providerData.certificationStatus,
+      certificationPath: providerData.certificationPath,
+    }
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET ALL BOOKINGS (with filters)
-// GET /bookings
-// ─────────────────────────────────────────────────────────────────────────────
-exports.getBookings = asyncHandler(async (req, res) => {
-  const { status, startDate, endDate } = req.query;
+/**
+ * Login washer
+ * POST /auth/washer/login  &  POST /auth/signin
+ */
+exports.loginWasher = asyncHandler(async (req, res) => {
+  const { email } = req.body;
 
-  let query = db.collection(COLLECTIONS.BOOKINGS);
-
-  if (req.user.role === ROLES.CUSTOMER) {
-    query = query.where('customerId', '==', req.user.uid);
+  if (!email) {
+    throw new AppError('Email is required', 400, 'VALIDATION_ERROR');
   }
-  if (status) query = query.where('status', '==', status);
-  if (startDate) query = query.where('scheduledAt', '>=', startDate);
-  if (endDate)   query = query.where('scheduledAt', '<=', endDate);
 
-  query = query.orderBy('scheduledAt', 'desc');
+  let userRecord;
+  try {
+    userRecord = await getAuth().getUserByEmail(email);
+  } catch (error) {
+    throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+  }
 
-  const snapshot = await query.get();
-  const bookings = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  const providerDoc = await getDb().collection(COLLECTIONS.PROVIDERS).doc(userRecord.uid).get();
 
-  res.status(200).json({ success: true, count: bookings.length, bookings });
+  if (!providerDoc.exists) {
+    throw new AppError('Provider profile not found', 404, 'PROVIDER_NOT_FOUND');
+  }
+
+  const providerData = providerDoc.data();
+
+  if (providerData.role !== ROLES.WASHER) {
+    throw new AppError('This endpoint is only for washer accounts', 403, 'INVALID_ROLE');
+  }
+
+  const customToken = await getAuth().createCustomToken(userRecord.uid, {
+    role: providerData.role,
+    washerStatus: providerData.washerStatus,
+  });
+
+  await getDb().collection(COLLECTIONS.PROVIDERS).doc(userRecord.uid).update({
+    lastLoginAt: new Date().toISOString(),
+  });
+
+  logger.logAuth('login_washer', userRecord.uid, true);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      token: customToken,
+      user: {
+        uid: userRecord.uid,
+        email: providerData.email,
+        displayName: providerData.displayName,
+        washerStatus: providerData.washerStatus,
+        certificationStatus: providerData.certificationStatus,
+        isActive: providerData.isActive,
+        isVerified: providerData.isVerified,
+        experience: providerData.experience || 0,
+        rating: providerData.rating || 0,
+      },
+    },
+  });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET SINGLE BOOKING
-// GET /bookings/:id
-// ─────────────────────────────────────────────────────────────────────────────
-exports.getBookingById = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const bookingDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
+/**
+ * Get washer profile
+ * GET /auth/washer/profile
+ */
+exports.getWasherProfile = asyncHandler(async (req, res) => {
+  console.log(`[DB] 🔍 Fetching washer profile for UID: ${req.user.uid}`);
+  const providerDoc = await getDb().collection(COLLECTIONS.PROVIDERS).doc(req.user.uid).get();
 
-  if (!bookingDoc.exists) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
-
-  const bookingData = bookingDoc.data();
-
-  if (req.user.role === ROLES.CUSTOMER && bookingData.customerId !== req.user.uid) {
-    throw new AppError('Not authorized to view this booking', 403, 'FORBIDDEN');
+  if (!providerDoc.exists) {
+    console.error(`[DB] ❌ Provider profile not found for UID: ${req.user.uid} in ${COLLECTIONS.PROVIDERS}`);
+    throw new AppError('Provider profile not found', 404, 'PROVIDER_NOT_FOUND');
   }
 
-  res.status(200).json({ success: true, booking: { id: bookingDoc.id, ...bookingData } });
+  const providerData = providerDoc.data();
+  console.log(`[DB] ✅ Profile found for UID: ${req.user.uid}. Role: ${providerData.role}, Status: ${providerData.washerStatus}`);
+
+  if (providerData.role !== ROLES.WASHER) {
+    throw new AppError('This endpoint is only for washer accounts', 403, 'INVALID_ROLE');
+  }
+
+  let certificationProgress = null;
+
+  if (providerData.certificationPath === 'field_certification' && providerData.fieldCertification) {
+    certificationProgress = {
+      type: 'field_certification',
+      completed: providerData.fieldCertification.completedEvaluations,
+      required: providerData.fieldCertification.requiredEvaluations,
+      percentage: Math.round(
+        (providerData.fieldCertification.completedEvaluations /
+          providerData.fieldCertification.requiredEvaluations) * 100
+      ),
+      evaluations: providerData.fieldCertification.evaluations,
+    };
+  } else if (providerData.certificationPath === 'training_center' && providerData.trainingCenter) {
+    certificationProgress = {
+      type: 'training_center',
+      status: providerData.trainingCenter.status,
+      centerName: providerData.trainingCenter.centerName,
+      expectedCompletion: providerData.trainingCenter.expectedCompletionDate,
+    };
+  }
+
+  res.status(200).json({
+    success: true,
+    provider: providerData,
+    certificationProgress,
+  });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// UPDATE BOOKING (customer cancel, staff status update)
-// PATCH /bookings/:id
-// ─────────────────────────────────────────────────────────────────────────────
-exports.updateBooking = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const { status, assignedStaffId, notes, cancellationReason } = req.body;
+/**
+ * Get current user profile
+ * GET /auth/profile
+ */
+exports.getProfile = async (req, res) => {
+  try {
+    const { uid } = req.user;
 
-  const bookingDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
-  if (!bookingDoc.exists) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+    const providerDoc = await getDb().collection(COLLECTIONS.PROVIDERS).doc(uid).get();
 
-  const bookingData = bookingDoc.data();
-  const updates = { updatedAt: new Date().toISOString() };
-
-  if (req.user.role === ROLES.CUSTOMER) {
-    if (bookingData.customerId !== req.user.uid) {
-      throw new AppError('Not authorized to update this booking', 403, 'FORBIDDEN');
-    }
-    if (status && status !== BOOKING_STATUS.CANCELLED) {
-      throw new AppError('Customers can only cancel bookings', 400, 'INVALID_OPERATION');
-    }
-    if (![BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED].includes(bookingData.status)) {
-      throw new AppError('Cannot cancel booking in current status', 400, 'INVALID_STATUS');
-    }
-    updates.status = BOOKING_STATUS.CANCELLED;
-    updates.cancellationReason = cancellationReason || 'Cancelled by customer';
-    updates.cancelledBy = req.user.uid;
-  }
-
-  if ([ROLES.STAFF, ROLES.ADMIN].includes(req.user.role)) {
-    if (status) {
-      updates.status = status;
-      if (status === BOOKING_STATUS.IN_PROGRESS && !bookingData.startedAt) updates.startedAt = new Date().toISOString();
-      if (status === BOOKING_STATUS.COMPLETED && !bookingData.completedAt)  updates.completedAt = new Date().toISOString();
-      if (status === BOOKING_STATUS.CANCELLED) {
-        updates.cancellationReason = cancellationReason || 'Cancelled by staff';
-        updates.cancelledBy = req.user.uid;
-      }
-    }
-    if (assignedStaffId !== undefined) {
-      updates.assignedStaffId = assignedStaffId;
-      if (assignedStaffId) {
-        const staffDoc = await db.collection(COLLECTIONS.USERS).doc(assignedStaffId).get();
-        if (staffDoc.exists) updates.assignedStaffName = staffDoc.data().displayName;
-      } else {
-        updates.assignedStaffName = null;
-      }
-    }
-    if (notes !== undefined) updates.notes = notes;
-  }
-
-  await db.collection(COLLECTIONS.BOOKINGS).doc(id).update(updates);
-
-  logger.info('Booking updated', { bookingId: id, updates: Object.keys(updates), updatedBy: req.user.uid });
-
-  if (updates.status) {
-    await safeNotify(notificationService.notifyBookingStatusChange, id, bookingData.customerId, updates.status);
-  }
-
-  res.status(200).json({ success: true, message: 'Booking updated successfully', updates });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CANCEL BOOKING
-// DELETE /bookings/:id  (or PATCH /bookings/:id/cancel)
-// Refunds subscription wash if applicable
-// ─────────────────────────────────────────────────────────────────────────────
-exports.cancelBooking = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const { reason } = req.body;
-
-  const bookingDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
-  if (!bookingDoc.exists) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
-
-  const bookingData = bookingDoc.data();
-
-  // Authorization check
-  if (req.user.role === ROLES.CUSTOMER && bookingData.customerId !== req.user.uid) {
-    throw new AppError('Not authorized to cancel this booking', 403, 'FORBIDDEN');
-  }
-
-  // Only pending or confirmed bookings can be cancelled
-  const cancellableStatuses = [BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED];
-  if (!cancellableStatuses.includes(bookingData.status)) {
-    throw new AppError(
-      `Cannot cancel a booking with status "${bookingData.status}". Only pending or confirmed bookings can be cancelled.`,
-      400,
-      'INVALID_STATUS'
-    );
-  }
-
-  // ── Subscription refund ───────────────────────────────────────────────────
-  // If this booking used a subscription wash, refund the deducted wash count
-  if (bookingData.paidWithSubscription && bookingData.subscriptionId) {
-    try {
-      const subDoc = await db.collection('subscriptions').doc(bookingData.subscriptionId).get();
-
-      if (subDoc.exists) {
-        const sub = subDoc.data();
-
-        // Only refund if subscription is still active (not expired/cancelled)
-        if (sub.status === 'active') {
-          await db.collection('subscriptions').doc(bookingData.subscriptionId).update({
-            remainingWashes: admin.firestore.FieldValue.increment(1),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-
-          logger.info('Subscription wash refunded on booking cancellation', {
-            bookingId: id,
-            subscriptionId: bookingData.subscriptionId,
-            customerId: bookingData.customerId,
-          });
-        } else {
-          logger.info('Subscription no longer active — no refund issued', {
-            bookingId: id,
-            subscriptionId: bookingData.subscriptionId,
-            subscriptionStatus: sub.status,
-          });
-        }
-      }
-    } catch (refundErr) {
-      // Non-fatal: log but still cancel the booking
-      logger.error('Subscription refund failed (non-fatal)', {
-        bookingId: id,
-        subscriptionId: bookingData.subscriptionId,
-        error: refundErr.message,
+    if (!providerDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        message: 'Provider not found',
       });
     }
+
+    res.status(200).json({
+      success: true,
+      data: { provider: providerDoc.data() }
+    });
+
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get profile',
+    });
+  }
+};
+
+/**
+ * Update user profile
+ * PATCH /auth/profile
+ */
+exports.updateProfile = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const { displayName, phoneNumber, serviceAreas, workingHours } = req.body;
+
+    const updates = { updatedAt: new Date().toISOString() };
+
+    if (displayName) {
+      updates.displayName = displayName;
+      await getAuth().updateUser(uid, { displayName });
+    }
+    if (phoneNumber) updates.phoneNumber = phoneNumber;
+    if (serviceAreas) updates.serviceAreas = serviceAreas;
+    if (workingHours) updates.workingHours = workingHours;
+    if (req.body.agreement !== undefined) updates.agreement = Boolean(req.body.agreement);
+
+    await getDb().collection(COLLECTIONS.PROVIDERS).doc(uid).update(updates);
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: { updates }
+    });
+
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update profile',
+    });
+  }
+};
+
+/**
+ * Update last login timestamp
+ * POST /auth/update-login
+ */
+exports.updateLastLogin = asyncHandler(async (req, res) => {
+  await getDb().collection(COLLECTIONS.PROVIDERS).doc(req.user.uid).update({
+    lastLoginAt: new Date().toISOString()
+  });
+
+  res.status(200).json({
+    success: true,
+    message: 'Last login updated'
+  });
+});
+
+/**
+ * Sign out washer — revokes Firebase refresh tokens server-side
+ * POST /auth/signout
+ */
+exports.signOut = asyncHandler(async (req, res) => {
+  const { uid } = req.user;
+  try {
+    await getAuth().revokeRefreshTokens(uid);
+  } catch (revokeErr) {
+    // Non-fatal — client session will still be cleared by the app
+    logger.warn('Failed to revoke refresh tokens on signout', { uid, error: revokeErr.message });
   }
 
-  // ── Update booking ────────────────────────────────────────────────────────
-  const cancelUpdate = {
-    status: BOOKING_STATUS.CANCELLED,
-    cancellationReason: reason || 'Cancelled',
-    cancelledBy: req.user.uid,
-    cancelledAt: new Date().toISOString(),
+  // Record sign-out timestamp (non-fatal)
+  await getDb().collection(COLLECTIONS.PROVIDERS).doc(uid).update({
+    lastSignOutAt: new Date().toISOString(),
+  }).catch(() => {});
+
+  logger.logAuth('signout_washer', uid, true);
+
+  res.status(200).json({
+    success: true,
+    message: 'Signed out successfully',
+  });
+});
+
+/**
+ * Update washer certification status (admin only)
+ * PATCH /auth/washer/:uid/certification
+ */
+exports.updateWasherCertification = asyncHandler(async (req, res) => {
+  const { uid } = req.params;
+  const { certificationStatus, adminNotes } = req.body;
+
+  if (!certificationStatus) {
+    throw new AppError('Certification status is required', 400, 'VALIDATION_ERROR');
+  }
+
+  const validStatuses = ['uncertified', 'pending_certification', 'in_training', 'certified', 'rejected'];
+  if (!validStatuses.includes(certificationStatus)) {
+    throw new AppError('Invalid certification status', 400, 'VALIDATION_ERROR');
+  }
+
+  const updates = {
+    certificationStatus,
+    'certificationReview.reviewedBy': req.user.uid,
+    'certificationReview.reviewedAt': new Date().toISOString(),
+    'certificationReview.status': certificationStatus === 'certified' ? 'approved' : 'pending',
+    'certificationReview.adminNotes': adminNotes || null,
     updatedAt: new Date().toISOString(),
   };
 
-  await db.collection(COLLECTIONS.BOOKINGS).doc(id).update(cancelUpdate);
+  if (certificationStatus === 'certified') {
+    updates.washerStatus = WASHER_STATUS.AVAILABLE;
+    updates.isActive = true;
+    updates.isVerified = true;
+    updates.availability = true;
+  }
 
-  logger.info('Booking cancelled', { bookingId: id, cancelledBy: req.user.uid, reason });
+  await getDb().collection(COLLECTIONS.PROVIDERS).doc(uid).update(updates);
 
-  await safeNotify(notificationService.notifyBookingCancelled, id, bookingData, req.user.uid);
+  logger.info('Washer certification updated', { uid, certificationStatus, updatedBy: req.user.uid });
 
   res.status(200).json({
     success: true,
-    message: bookingData.paidWithSubscription
-      ? 'Booking cancelled and your subscription wash has been refunded.'
-      : 'Booking cancelled successfully.',
-    refunded: !!bookingData.paidWithSubscription,
+    message: 'Certification status updated successfully',
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ACCEPT BOOKING (race mode)
-// PATCH /bookings/:id/accept
-// Body: { preferredTime?: string }  — washer's chosen arrival time e.g. "09:00"
-// ─────────────────────────────────────────────────────────────────────────────
-exports.acceptBooking = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const { preferredTime } = req.body;
+/**
+ * Create staff or admin user (admin only)
+ * POST /auth/create-staff
+ */
+exports.createStaff = asyncHandler(async (req, res) => {
+  const { email, password, displayName, phoneNumber, role } = req.body;
 
-  const bookingDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
-  if (!bookingDoc.exists) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
-
-  const booking = bookingDoc.data();
-
-  // Race mode: only the first washer to accept wins
-  if (booking.status !== BOOKING_STATUS.PENDING) {
-    throw new AppError(
-      booking.status === BOOKING_STATUS.CONFIRMED
-        ? 'Another washer already accepted this job.'
-        : `Cannot accept a booking with status "${booking.status}".`,
-      409,
-      'RACE_LOST'
-    );
+  if (!email || !password || !displayName || !role) {
+    throw new AppError('Email, password, displayName, and role are required', 400, 'VALIDATION_ERROR');
   }
 
-  // Verify washer profile
-  const providerDoc = await db.collection('providers').doc(req.user.uid).get();
-  if (!providerDoc.exists) throw new AppError('Provider profile not found', 404, 'PROVIDER_NOT_FOUND');
-
-  const provider = providerDoc.data();
-  if (!provider.isVerified) {
-    throw new AppError('Your account is not yet verified by admin.', 403, 'NOT_VERIFIED');
+  if (![ROLES.STAFF, ROLES.ADMIN].includes(role)) {
+    throw new AppError('Invalid role. Must be staff or admin', 400, 'INVALID_ROLE');
   }
 
-  // Determine arrival time
-  const arrivalTime = preferredTime || booking.scheduledTime || booking.scheduledAt;
-  const timeAdjusted = !!(preferredTime && preferredTime !== (booking.scheduledTime || booking.scheduledAt));
-
-  const updatedStatusHistory = [
-    ...(booking.statusHistory || []),
-    {
-      status: BOOKING_STATUS.CONFIRMED,
-      updatedAt: new Date().toISOString(),
-      updatedBy: 'provider',
-      providerId: req.user.uid,
-    },
-  ];
-
-  await db.collection(COLLECTIONS.BOOKINGS).doc(id).update({
-    status: BOOKING_STATUS.CONFIRMED,
-    providerId: req.user.uid,
-    provider: {
-      displayName: provider.displayName || '',
-      photoURL: provider.photoURL || null,
-      rating: provider.rating || 0,
-      phone: provider.phone || null,
-    },
-    washerPreferredTime: arrivalTime,
-    timeAdjusted,
-    statusHistory: updatedStatusHistory,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  const userRecord = await getAuth().createUser({
+    email,
+    password,
+    displayName,
+    phoneNumber: phoneNumber || null,
+    emailVerified: true
   });
 
-  logger.info('Booking accepted', {
-    bookingId: id,
-    providerId: req.user.uid,
-    arrivalTime,
-    timeAdjusted,
-  });
-
-  const updatedDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
-  const updatedBooking = { id: updatedDoc.id, ...updatedDoc.data() };
-
-  await safeNotify(notificationService.notifyBookingConfirmed, updatedBooking);
-
-  res.status(200).json({
-    success: true,
-    message: timeAdjusted
-      ? `Booking accepted. Customer notified of your arrival at ${arrivalTime}.`
-      : 'Booking accepted successfully.',
-    booking: updatedBooking,
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DECLINE BOOKING (race mode — does NOT lock the booking)
-// PATCH /bookings/:id/decline
-// Logs the rejection so this washer won't see it again, but other washers
-// can still accept it.
-// ─────────────────────────────────────────────────────────────────────────────
-exports.declineBooking = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const { reason } = req.body;
-
-  const bookingDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
-  if (!bookingDoc.exists) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
-
-  const booking = bookingDoc.data();
-
-  // Can only decline pending bookings
-  if (booking.status !== BOOKING_STATUS.PENDING) {
-    throw new AppError('Can only decline pending bookings', 400, 'INVALID_STATUS');
-  }
-
-  // Log the rejection without touching the booking's status
-  // This preserves race mode — other washers can still accept
-  await db.collection('booking_rejections').add({
-    bookingId: id,
-    providerId: req.user.uid,
-    reason: reason || 'Not available',
-    rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
-
-  logger.info('Booking declined by washer (race mode — booking still open)', {
-    bookingId: id,
-    washerId: req.user.uid,
-    reason,
-  });
-
-  res.status(200).json({
-    success: true,
-    message: 'Job skipped.',
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ARRIVE AT BOOKING
-// PATCH /bookings/:id/arrive
-// ─────────────────────────────────────────────────────────────────────────────
-exports.arriveBooking = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-
-  const bookingDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
-  if (!bookingDoc.exists) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
-
-  const booking = bookingDoc.data();
-
-  if (booking.providerId !== req.user.uid) {
-    throw new AppError('Not authorized to access this booking', 403, 'FORBIDDEN');
-  }
-
-  if (booking.status !== BOOKING_STATUS.CONFIRMED) {
-    throw new AppError(
-      `Cannot mark as arrived. Current status: "${booking.status}". Validation expects "confirmed".`,
-      400,
-      'INVALID_STATUS'
-    );
-  }
-
-  const updatedStatusHistory = [
-    ...(booking.statusHistory || []),
-    { status: BOOKING_STATUS.ARRIVED, updatedAt: new Date().toISOString(), updatedBy: 'provider' },
-  ];
-
-  await db.collection(COLLECTIONS.BOOKINGS).doc(id).update({
-    status: BOOKING_STATUS.ARRIVED,
-    arrivedAt: admin.firestore.FieldValue.serverTimestamp(),
-    statusHistory: updatedStatusHistory,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
-
-  logger.info('Provider arrived', { bookingId: id, providerId: req.user.uid });
-
-  const updatedDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
-  await safeNotify(notificationService.notifyBookingStatusChange, id, booking.customerId, 'arrived');
-
-  res.status(200).json({ success: true, message: 'Marked arrived. Customer notified.' });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// START SERVICE
-// PATCH /bookings/:id/start
-// ─────────────────────────────────────────────────────────────────────────────
-exports.startService = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-
-  const bookingDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
-  if (!bookingDoc.exists) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
-
-  const booking = bookingDoc.data();
-
-  if (booking.providerId !== req.user.uid) {
-    throw new AppError('Not authorized to start this booking', 403, 'FORBIDDEN');
-  }
-
-  if (![BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.ARRIVED].includes(booking.status)) {
-    throw new AppError(
-      `Cannot start service. Current status: "${booking.status}".`,
-      400,
-      'INVALID_STATUS'
-    );
-  }
-
-  const updatedStatusHistory = [
-    ...(booking.statusHistory || []),
-    { status: BOOKING_STATUS.IN_PROGRESS, updatedAt: new Date().toISOString(), updatedBy: 'provider' },
-  ];
-
-  await db.collection(COLLECTIONS.BOOKINGS).doc(id).update({
-    status: BOOKING_STATUS.IN_PROGRESS,
-    startedAt: admin.firestore.FieldValue.serverTimestamp(),
-    statusHistory: updatedStatusHistory,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
-
-  logger.info('Service started', { bookingId: id, providerId: req.user.uid });
-
-  const updatedDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
-  await safeNotify(notificationService.notifyServiceStarted, { id: updatedDoc.id, ...updatedDoc.data() });
-
-  res.status(200).json({ success: true, message: 'Service started. Customer notified.' });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// COMPLETE SERVICE
-// PATCH /bookings/:id/complete
-// Updates provider earnings and total bookings count
-// ─────────────────────────────────────────────────────────────────────────────
-exports.completeService = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-
-  const bookingDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
-  if (!bookingDoc.exists) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
-
-  const booking = bookingDoc.data();
-
-  if (booking.providerId !== req.user.uid) {
-    throw new AppError('Not authorized to complete this booking', 403, 'FORBIDDEN');
-  }
-
-  if (booking.status !== BOOKING_STATUS.IN_PROGRESS) {
-    throw new AppError(
-      `Cannot complete service. Current status: "${booking.status}".`,
-      400,
-      'INVALID_STATUS'
-    );
-  }
-
-  const updatedStatusHistory = [
-    ...(booking.statusHistory || []),
-    { status: BOOKING_STATUS.COMPLETED, updatedAt: new Date().toISOString(), updatedBy: 'provider' },
-  ];
-
-  // ── Mark booking complete ─────────────────────────────────────────────────
-  await db.collection(COLLECTIONS.BOOKINGS).doc(id).update({
-    status: BOOKING_STATUS.COMPLETED,
-    completedAt: admin.firestore.FieldValue.serverTimestamp(),
-    statusHistory: updatedStatusHistory,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
-
-  // ── Update provider stats + earnings ─────────────────────────────────────
-  const earningsAmount = booking.totalPrice || booking.serviceSnapshot?.priceAtBooking || 0;
-
-  const providerUpdate = {
-    totalBookings: admin.firestore.FieldValue.increment(1),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  const userData = {
+    uid: userRecord.uid,
+    email,
+    displayName,
+    phoneNumber: phoneNumber || null,
+    role,
+    status: USER_STATUS.ACTIVE,
+    createdAt: new Date().toISOString(),
+    createdBy: req.user.uid,
+    lastLoginAt: null
   };
 
-  // If paid (not a free subscription job), update earnings
-  if (!booking.paidWithSubscription && earningsAmount > 0) {
-    providerUpdate.totalEarnings = admin.firestore.FieldValue.increment(earningsAmount);
-  }
+  await getDb().collection(COLLECTIONS.USERS).doc(userRecord.uid).set(userData);
 
-  await db.collection('providers').doc(req.user.uid).update(providerUpdate);
+  logger.info('Staff user created', { uid: userRecord.uid, email, role, createdBy: req.user.uid });
 
-  // ── Also write to a dedicated earnings ledger ─────────────────────────────
-  if (!booking.paidWithSubscription && earningsAmount > 0) {
-    const earningsRef = db.collection('provider_earnings').doc(req.user.uid);
-    const earningsDoc = await earningsRef.get();
-
-    if (earningsDoc.exists) {
-      await earningsRef.update({
-        totalEarnings: admin.firestore.FieldValue.increment(earningsAmount),
-        completedJobs: admin.firestore.FieldValue.increment(1),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-    } else {
-      await earningsRef.set({
-        providerId: req.user.uid,
-        totalEarnings: earningsAmount,
-        completedJobs: 1,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+  res.status(201).json({
+    success: true,
+    message: `${role} user created successfully`,
+    user: {
+      uid: userRecord.uid,
+      email: userData.email,
+      displayName: userData.displayName,
+      role: userData.role
     }
-  }
-
-  logger.info('Service completed', {
-    bookingId: id,
-    providerId: req.user.uid,
-    earnings: earningsAmount,
-    paidWithSubscription: booking.paidWithSubscription,
-  });
-
-  const updatedDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
-  await safeNotify(notificationService.notifyServiceCompleted, { id: updatedDoc.id, ...updatedDoc.data() });
-
-  res.status(200).json({
-    success: true,
-    message: 'Service completed. Earnings updated.',
-    earned: booking.paidWithSubscription ? 0 : earningsAmount,
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BOOKING STATS (admin/staff only)
-// GET /bookings/stats
-// ─────────────────────────────────────────────────────────────────────────────
-exports.getBookingStats = asyncHandler(async (req, res) => {
-  const bookingsRef = db.collection(COLLECTIONS.BOOKINGS);
+/**
+ * Disable user account (admin only)
+ */
+exports.disableUser = asyncHandler(async (req, res) => {
+  const { uid } = req.params;
 
-  const [pendingSnap, confirmedSnap, inProgressSnap, completedSnap, cancelledSnap] = await Promise.all([
-    bookingsRef.where('status', '==', BOOKING_STATUS.PENDING).get(),
-    bookingsRef.where('status', '==', BOOKING_STATUS.CONFIRMED).get(),
-    bookingsRef.where('status', '==', BOOKING_STATUS.IN_PROGRESS).get(),
-    bookingsRef.where('status', '==', BOOKING_STATUS.COMPLETED).get(),
-    bookingsRef.where('status', '==', BOOKING_STATUS.CANCELLED).get(),
-  ]);
+  if (uid === req.user.uid) {
+    throw new AppError('Cannot disable your own account', 400, 'INVALID_OPERATION');
+  }
 
-  const stats = {
-    pending:    pendingSnap.size,
-    confirmed:  confirmedSnap.size,
-    inProgress: inProgressSnap.size,
-    completed:  completedSnap.size,
-    cancelled:  cancelledSnap.size,
-  };
+  await getDb().collection(COLLECTIONS.USERS).doc(uid).update({ status: USER_STATUS.DISABLED });
+  await getAuth().updateUser(uid, { disabled: true });
 
-  stats.total = Object.values(stats).reduce((a, b) => a + b, 0);
+  logger.warn('User disabled', { uid, disabledBy: req.user.uid });
 
-  res.status(200).json({ success: true, stats });
+  res.status(200).json({ success: true, message: 'User disabled successfully' });
+});
+
+/**
+ * Enable user account (admin only)
+ */
+exports.enableUser = asyncHandler(async (req, res) => {
+  const { uid } = req.params;
+
+  await getDb().collection(COLLECTIONS.USERS).doc(uid).update({ status: USER_STATUS.ACTIVE });
+  await getAuth().updateUser(uid, { disabled: false });
+
+  logger.info('User enabled', { uid, enabledBy: req.user.uid });
+
+  res.status(200).json({ success: true, message: 'User enabled successfully' });
 });
