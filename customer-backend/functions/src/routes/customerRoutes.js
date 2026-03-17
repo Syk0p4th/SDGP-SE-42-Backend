@@ -9,6 +9,7 @@ const customerVehicleController = require('../controllers/customer/customerVehic
 const customerReviewController = require('../controllers/customer/customerReviewController');
 const customerSubscriptionController = require('../controllers/customer/customerSubscriptionController');
 const customerNotificationController = require('../controllers/customer/customerNotificationController');
+const complaintController = require('../controllers/complaintController');
 const customerPaymentController = require('../controllers/customer/customerPaymentController'); // NEW
 const { verifyToken } = require('../middleware/auth');
 const { upload } = require('../middleware/upload');
@@ -119,5 +120,22 @@ router.get('/reviews', verifyToken, customerReviewController.getMyReviews);
 router.post('/reviews', verifyToken, createReviewValidationRules, validate, customerReviewController.createReview);
 router.put('/reviews/:reviewId', verifyToken, updateReviewValidationRules, validate, customerReviewController.updateReview);
 router.delete('/reviews/:reviewId', verifyToken, customerReviewController.deleteReview);
+
+// multer for photo uploads
+const multer = require('multer');
+const upload = multer({ dest: '/tmp/uploads/' });
+
+// File a new complaint (with up to 5 evidence photos)
+router.post(
+  '/complaints',
+  upload.array('evidence', 5),
+  complaintController.submitComplaint
+);
+
+// List all complaints this customer has filed
+router.get('/complaints', complaintController.getMyComplaints);
+
+// Get a single complaint's status and timeline (used by complaint-status.tsx)
+router.get('/complaints/:id', complaintController.getComplaintById);
 
 module.exports = router;
