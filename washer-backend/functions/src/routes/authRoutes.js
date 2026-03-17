@@ -23,6 +23,7 @@ router.post('/washer/login', authController.loginWasher);
 
 // Protected routes (require authentication)
 router.get('/profile', authenticate, authController.getProfile);
+router.get('/washer/profile', authenticate, authController.getWasherProfile);
 router.patch('/profile', authenticate, authController.updateProfile);
 router.post('/update-login', authenticate, authController.updateLastLogin);
 
