@@ -5,8 +5,8 @@
     "lint": "eslint .",
     "serve": "firebase emulators:start --only functions",
     "shell": "firebase functions:shell",
-    "start": "npx -y kill-port 3000 || true && nodemon src/index.js",
-    "dev": "npx -y kill-port 3000 || true && nodemon src/index.js",
+    "start": "node -e \"const { execSync } = require('child_process'); try { execSync('npx kill-port 3000', { stdio: 'inherit' }); } catch(e) {} \" && nodemon src/index.js",
+    "dev": "node -e \"const { execSync } = require('child_process'); try { execSync('npx kill-port 3000', { stdio: 'inherit' }); } catch(e) {} \" && nodemon src/index.js",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log"
   },
