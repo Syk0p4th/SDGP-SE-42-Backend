@@ -14,7 +14,7 @@ if (!admin.apps.length) {
   } else {
     // Local development (using nodemon or emulator)
     try {
-      const serviceAccount = require('../../../serviceAccountKey.json');
+      const serviceAccount = require('../../serviceAccountKey.json');
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
         storageBucket: 'washxpress-19b94.appspot.com'

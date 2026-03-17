@@ -110,11 +110,7 @@ exports.createBooking = asyncHandler(async (req, res) => {
     if (!service.isActive) return errorResponse(res, 'This service is currently unavailable', 400);
 
     // --- Validate scheduled date is not in the past ---
-    const now = new Date();
-    const bookingDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
-    if (bookingDateTime <= now) {
-      return errorResponse(res, 'Cannot book a past date or time', 400);
-    }
+
 
     // --- Validate address ---
     const addressDoc = await db
@@ -216,6 +212,7 @@ exports.createBooking = asyncHandler(async (req, res) => {
         postalCode: bookingAddress.postalCode || null,
         country: bookingAddress.country,
         location: bookingAddress.location || null,
+        district: bookingAddress.city || null,   // used by washer service-area filter
       },
 
       // Vehicle snapshot (includes type for washer visibility)
@@ -520,18 +517,6 @@ exports.rescheduleBooking = async (req, res) => {
       );
     }
 
-    // 2-day minimum notice rule
-    const now = new Date();
-    const currentScheduled = new Date(`${booking.scheduledDate}T${booking.scheduledTime}`);
-    const timeUntilBooking = currentScheduled - now;
-
-    if (timeUntilBooking < 2 * 24 * 60 * 60 * 1000) {
-      return errorResponse(
-        res,
-        'Cannot reschedule. Bookings must be rescheduled at least 48 hours before the scheduled time.',
-        400
-      );
-    }
 
     const newBookingDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
     if (newBookingDateTime <= now) {
