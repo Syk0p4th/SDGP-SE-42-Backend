@@ -3,7 +3,7 @@ const functions = require('firebase-functions');
 const express = require('express');
 const cors = require('cors');
 
-// Initialize Express app first
+// Initialize Express app
 const app = express();
 
 // Middleware
@@ -13,7 +13,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Logging middleware
 app.use((req, res, next) => {
-  console.log(`📨 ${req.method} ${req.path}`);
+  console.log(`[DEBUG] 📨 ${req.method} ${req.originalUrl}`);
   next();
 });
 
@@ -26,7 +26,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Try to load routes with error handling
+// Load routes
 try {
   console.log('Loading customer routes...');
   const customerRoutes = require('./routes/customerRoutes');
@@ -37,7 +37,7 @@ try {
   console.error(error);
 }
 
-// Try to load error handler
+// Error handler
 try {
   const { globalErrorHandler } = require('./utils/errorHandling');
   app.use(globalErrorHandler);
@@ -59,15 +59,11 @@ app.use((req, res) => {
 // Export as Firebase Function
 exports.customerApi = functions.https.onRequest(app);
 
-
 // For local testing
-// For local testing only
-if (require.main === module) {
-  const PORT = process.env.PORT || 3000;
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n🚀 Server running on port ${PORT}`);
-    console.log(`📍 Health: http://0.0.0.0:${PORT}/health`);
-    console.log(`📍 Signup: POST http://0.0.0.0:${PORT}/api/customer/auth/signup`);
-    console.log(`📍 Login: POST http://0.0.0.0:${PORT}/api/customer/auth/signin\n`);
-  });
-}
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n🚀 Server running on port ${PORT}`);
+  console.log(`📍 Health: http://0.0.0.0:${PORT}/health`);
+  console.log(`📍 Signup: POST http://0.0.0.0:${PORT}/api/customer/auth/signup`);
+  console.log(`📍 Login: POST http://0.0.0.0:${PORT}/api/customer/auth/signin\n`);
+});

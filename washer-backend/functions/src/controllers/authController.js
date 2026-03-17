@@ -472,13 +472,16 @@ exports.loginWasher = asyncHandler(async (req, res) => {
  * GET /auth/washer/profile
  */
 exports.getWasherProfile = asyncHandler(async (req, res) => {
+  console.log(`[DB] 🔍 Fetching washer profile for UID: ${req.user.uid}`);
   const providerDoc = await getDb().collection(COLLECTIONS.PROVIDERS).doc(req.user.uid).get();
 
   if (!providerDoc.exists) {
+    console.error(`[DB] ❌ Provider profile not found for UID: ${req.user.uid} in ${COLLECTIONS.PROVIDERS}`);
     throw new AppError('Provider profile not found', 404, 'PROVIDER_NOT_FOUND');
   }
 
   const providerData = providerDoc.data();
+  console.log(`[DB] ✅ Profile found for UID: ${req.user.uid}. Role: ${providerData.role}, Status: ${providerData.washerStatus}`);
 
   if (providerData.role !== ROLES.WASHER) {
     throw new AppError('This endpoint is only for washer accounts', 403, 'INVALID_ROLE');

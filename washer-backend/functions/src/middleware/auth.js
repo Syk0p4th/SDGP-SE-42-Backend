@@ -20,19 +20,34 @@ const authenticate = asyncHandler(async (req, res, next) => {
   try {
     // Verify token with Firebase
     const decodedToken = await auth.verifyIdToken(token);
+    console.log(`[AUTH] 🔍 Decoded token for UID: ${decodedToken.uid}`);
 
     // Get user document from Firestore
-    const userDoc = await db.collection(COLLECTIONS.USERS).doc(decodedToken.uid).get();
+    // Try USERS collection first
+    let userDoc = await db.collection(COLLECTIONS.USERS).doc(decodedToken.uid).get();
+    let collectionSource = COLLECTIONS.USERS;
 
     if (!userDoc.exists) {
+      console.log(`[AUTH] ⚠️ User not found in ${COLLECTIONS.USERS}, checking ${COLLECTIONS.PROVIDERS}...`);
+      // Fallback to PROVIDERS collection
+      userDoc = await db.collection(COLLECTIONS.PROVIDERS).doc(decodedToken.uid).get();
+      collectionSource = COLLECTIONS.PROVIDERS;
+    }
+
+    if (!userDoc.exists) {
+      console.error(`[AUTH] ❌ User ${decodedToken.uid} not found in any collection`);
       throw new AppError('User not found', 404, 'USER_NOT_FOUND');
     }
 
     const userData = userDoc.data();
+    console.log(`[AUTH] ✅ User found in ${collectionSource} for UID: ${decodedToken.uid}`);
 
     // Check if user is disabled
-    if (userData.status === 'disabled') {
-      throw new AppError('Account is disabled', 403, 'ACCOUNT_DISABLED');
+    if (userData.status === 'disabled' || userData.isActive === false) {
+       // Note: Some collections use 'isActive' instead of 'status'
+       if (userData.status === 'disabled') {
+         throw new AppError('Account is disabled', 403, 'ACCOUNT_DISABLED');
+       }
     }
 
     // Attach user to request
@@ -48,6 +63,7 @@ const authenticate = asyncHandler(async (req, res, next) => {
     if (error instanceof AppError) {
       throw error;
     }
+    console.error('[AUTH] ❌ Authentication error:', error);
     logger.logAuth('authenticate', 'unknown', false);
     throw new AppError('Invalid or expired token', 401, 'INVALID_TOKEN');
   }

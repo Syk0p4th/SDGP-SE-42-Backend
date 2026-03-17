@@ -21,6 +21,7 @@ const verifyToken = async (req, res, next) => {
 
     // Verify the token
     const decodedToken = await admin.auth().verifyIdToken(token);
+    console.log(`[AUTH] 🔍 Decoded token for UID: ${decodedToken.uid}`);
     
     // Attach user info to request
     req.user = {
@@ -29,6 +30,7 @@ const verifyToken = async (req, res, next) => {
       email_verified: decodedToken.email_verified
     };
 
+    console.log(`[AUTH] ✅ User attached: ${req.user.uid}`);
     next();
   } catch (error) {
     console.error('Token verification error:', error);
