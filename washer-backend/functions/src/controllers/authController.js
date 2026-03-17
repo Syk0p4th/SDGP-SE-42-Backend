@@ -600,6 +600,32 @@ exports.updateLastLogin = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Sign out washer — revokes Firebase refresh tokens server-side
+ * POST /auth/signout
+ */
+exports.signOut = asyncHandler(async (req, res) => {
+  const { uid } = req.user;
+  try {
+    await getAuth().revokeRefreshTokens(uid);
+  } catch (revokeErr) {
+    // Non-fatal — client session will still be cleared by the app
+    logger.warn('Failed to revoke refresh tokens on signout', { uid, error: revokeErr.message });
+  }
+
+  // Record sign-out timestamp (non-fatal)
+  await getDb().collection(COLLECTIONS.PROVIDERS).doc(uid).update({
+    lastSignOutAt: new Date().toISOString(),
+  }).catch(() => {});
+
+  logger.logAuth('signout_washer', uid, true);
+
+  res.status(200).json({
+    success: true,
+    message: 'Signed out successfully',
+  });
+});
+
+/**
  * Update washer certification status (admin only)
  * PATCH /auth/washer/:uid/certification
  */

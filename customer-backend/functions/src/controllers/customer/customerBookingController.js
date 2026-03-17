@@ -518,6 +518,7 @@ exports.rescheduleBooking = async (req, res) => {
     }
 
 
+    const now = new Date();
     const newBookingDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
     if (newBookingDateTime <= now) {
       return errorResponse(res, 'Cannot reschedule to a past date or time', 400);
