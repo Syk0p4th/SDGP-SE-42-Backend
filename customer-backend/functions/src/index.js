@@ -60,10 +60,27 @@ app.use((req, res) => {
 exports.customerApi = functions.https.onRequest(app);
 
 // For local testing
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Server running on port ${PORT}`);
-  console.log(`📍 Health: http://0.0.0.0:${PORT}/health`);
-  console.log(`📍 Signup: POST http://0.0.0.0:${PORT}/api/customer/auth/signup`);
-  console.log(`📍 Login: POST http://0.0.0.0:${PORT}/api/customer/auth/signin\n`);
-});
+const startServer = (port) => {
+  const server = app.listen(port, '0.0.0.0', () => {
+    console.log(`\n🚀 Server running on port ${port}`);
+    console.log(`📍 Health: http://localhost:${port}/health`);
+    console.log(`📍 Signup: POST http://localhost:${port}/api/customer/auth/signup`);
+    console.log(`📍 Login: POST http://localhost:${port}/api/customer/auth/signin\n`);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`⚠️ Port ${port} is already in use.`);
+      console.log(`👉 Attempting to start on port ${port + 1}...`);
+      startServer(port + 1);
+    } else {
+      console.error('❌ Server error:', err);
+      process.exit(1);
+    }
+  });
+};
+
+if (require.main === module || process.env.NODE_ENV === 'development') {
+  const INITIAL_PORT = parseInt(process.env.PORT) || 3000;
+  startServer(INITIAL_PORT);
+}

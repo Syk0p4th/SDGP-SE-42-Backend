@@ -92,10 +92,27 @@ app.use((req, res) => {
 exports.washerApi = functions.https.onRequest(app);
 
 // Local development
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Washer Backend running on port ${PORT}`);
-  console.log(`📍 Health:   http://0.0.0.0:${PORT}/health`);
-  console.log(`📍 Login:    POST http://0.0.0.0:${PORT}/api/provider/auth/signin`);
-  console.log(`📍 Register: POST http://0.0.0.0:${PORT}/api/provider/auth/washer/register\n`);
-});
+const startServer = (port) => {
+  const server = app.listen(port, '0.0.0.0', () => {
+    console.log(`\n🚀 Washer Backend running on port ${port}`);
+    console.log(`📍 Health:   http://localhost:${port}/health`);
+    console.log(`📍 Login:    POST http://localhost:${port}/api/provider/auth/signin`);
+    console.log(`📍 Register: POST http://localhost:${port}/api/provider/auth/washer/register\n`);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`⚠️ Port ${port} is already in use.`);
+      console.log(`👉 Attempting to start on port ${port + 1}...`);
+      startServer(port + 1);
+    } else {
+      console.error('❌ Server error:', err);
+      process.exit(1);
+    }
+  });
+};
+
+if (require.main === module || process.env.NODE_ENV === 'development') {
+  const INITIAL_PORT = parseInt(process.env.PORT) || 3001;
+  startServer(INITIAL_PORT);
+}

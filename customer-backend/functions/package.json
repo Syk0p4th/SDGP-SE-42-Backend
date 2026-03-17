@@ -5,8 +5,8 @@
     "lint": "eslint .",
     "serve": "firebase emulators:start --only functions",
     "shell": "firebase functions:shell",
-    "start": "nodemon src/index.js",
-    "dev": "nodemon src/index.js",
+    "start": "npx -y kill-port 3000 || true && nodemon src/index.js",
+    "dev": "npx -y kill-port 3000 || true && nodemon src/index.js",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log"
   },
