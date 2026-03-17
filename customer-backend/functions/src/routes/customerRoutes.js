@@ -9,10 +9,10 @@ const customerVehicleController = require('../controllers/customer/customerVehic
 const customerReviewController = require('../controllers/customer/customerReviewController');
 const customerSubscriptionController = require('../controllers/customer/customerSubscriptionController');
 const customerNotificationController = require('../controllers/customer/customerNotificationController');
-const complaintController = require('../controllers/complaintController');
-const customerPaymentController = require('../controllers/customer/customerPaymentController'); // NEW
+const customerComplaintController = require('../controllers/customer/customerComplaintController');
+const customerPaymentController = require('../controllers/customer/customerPaymentController');
 const { verifyToken } = require('../middleware/auth');
-const { upload } = require('../middleware/upload');
+const { upload } = require('../middleware/upload'); // ← single source of truth for multer
 const {
   loginValidationRules,
   signupValidationRules,
@@ -39,8 +39,7 @@ const {
 router.post('/payments/notify', customerPaymentController.paymentNotify);
 router.post('/subscriptions/payment-notify', customerSubscriptionController.subscriptionPaymentNotify);
 
-// ============ PUBLIC ROUTES ============
-
+// ─── Public routes ────────────────────────────────────────────────────────────
 router.post('/auth/signup', signupValidationRules, validate, customerAuthController.signUp);
 router.post('/auth/signin', loginValidationRules, validate, customerAuthController.signIn);
 router.post('/auth/google', googleSignInValidationRules, validate, customerAuthController.googleSignIn);
@@ -49,93 +48,80 @@ router.post('/auth/verify-reset-code', verifyResetCodeValidationRules, validate,
 router.post('/auth/confirm-password-reset', resetPasswordValidationRules, validate, customerAuthController.confirmPasswordReset);
 router.post('/auth/verify-email', verifyEmailValidationRules, validate, customerAuthController.verifyEmail);
 
-
-
-// ─── Internal/Cron endpoints (NO auth — called by internal services) ──────────
+// ─── Internal / Cron (NO auth) ────────────────────────────────────────────────
 router.post('/subscriptions/expire-check', customerSubscriptionController.expireSubscriptions);
 
-// ============ PROTECTED ROUTES ============
-
+// ─── Auth (protected) ─────────────────────────────────────────────────────────
 router.post('/auth/refresh-token', verifyToken, customerAuthController.refreshToken);
 router.post('/auth/signout', verifyToken, customerAuthController.signOut);
 router.post('/auth/send-verification-email', verifyToken, customerAuthController.sendEmailVerification);
 router.get('/auth/check-email-verification', verifyToken, customerAuthController.checkEmailVerificationStatus);
 
-// Profile
+// ─── Profile ──────────────────────────────────────────────────────────────────
 router.get('/profile', verifyToken, customerAuthController.getProfile);
 router.put('/profile', verifyToken, updateProfileValidationRules, validate, customerAuthController.updateProfile);
 router.post('/profile/photo', verifyToken, upload.single('photo'), customerAuthController.uploadProfilePhoto);
 
-// Addresses
+// ─── Addresses ────────────────────────────────────────────────────────────────
 router.get('/addresses', verifyToken, customerProfileController.getAddresses);
 router.post('/addresses', verifyToken, addressValidationRules, validate, customerProfileController.addAddress);
 router.put('/addresses/:addressId', verifyToken, addressValidationRules, validate, customerProfileController.updateAddress);
 router.delete('/addresses/:addressId', verifyToken, customerProfileController.deleteAddress);
 router.patch('/addresses/:addressId/default', verifyToken, customerProfileController.setDefaultAddress);
+router.get('/addresses/:addressId', verifyToken, customerProfileController.getAddressById);
 
-// Vehicles
+// ─── Vehicles ─────────────────────────────────────────────────────────────────
 router.get('/vehicles', verifyToken, customerVehicleController.getVehicles);
 router.get('/vehicles/:vehicleId', verifyToken, customerVehicleController.getVehicleDetails);
 router.post('/vehicles', verifyToken, addVehicleValidationRules, validate, customerVehicleController.addVehicle);
 router.put('/vehicles/:vehicleId', verifyToken, updateVehicleValidationRules, validate, customerVehicleController.updateVehicle);
 router.delete('/vehicles/:vehicleId', verifyToken, customerVehicleController.deleteVehicle);
 
-// Subscriptions
+// ─── Subscriptions ────────────────────────────────────────────────────────────
 router.get('/subscriptions/plans', customerSubscriptionController.getPlans);
 router.get('/subscriptions', verifyToken, customerSubscriptionController.getSubscriptions);
 router.post('/subscriptions', verifyToken, subscribeValidationRules, validate, customerSubscriptionController.initiateSubscription);
+router.post('/subscriptions/initiate', verifyToken, customerSubscriptionController.initiateSubscription);
 router.patch('/subscriptions/:subscriptionId/activate', verifyToken, customerSubscriptionController.activateSubscriptionFallback);
 router.patch('/subscriptions/:subscriptionId/cancel', verifyToken, cancelSubscriptionValidationRules, validate, customerSubscriptionController.cancelSubscription);
 
-// Notifications
+// ─── Notifications ────────────────────────────────────────────────────────────
 router.get('/notifications', verifyToken, customerNotificationController.getNotifications);
 router.patch('/notifications/:notificationId/read', verifyToken, customerNotificationController.markAsRead);
 router.patch('/notifications/read-all', verifyToken, customerNotificationController.markAllAsRead);
 router.delete('/notifications/:notificationId', verifyToken, customerNotificationController.deleteNotification);
 router.post('/notifications/fcm-token', verifyToken, customerNotificationController.updateFcmToken);
 
-// Services (public)
+// ─── Services (public) ────────────────────────────────────────────────────────
 router.get('/services/categories', customerServiceController.getCategories);
 router.get('/services/providers/:providerId', customerServiceController.getProviderProfile);
 router.get('/services/search', customerServiceController.searchServices);
 router.get('/services', customerServiceController.getServices);
 router.get('/services/:serviceId', customerServiceController.getServiceDetails);
 
-// Bookings
+// ─── Bookings ─────────────────────────────────────────────────────────────────
 router.post('/bookings', verifyToken, createBookingValidationRules, validate, customerBookingController.createBooking);
 router.post('/bookings/:id/accept', verifyToken, customerBookingController.acceptBooking);
 router.get('/bookings', verifyToken, customerBookingController.getBookings);
 router.get('/bookings/:bookingId', verifyToken, customerBookingController.getBookingDetails);
 router.patch('/bookings/:bookingId/cancel', verifyToken, cancelBookingValidationRules, validate, customerBookingController.cancelBooking);
 router.patch('/bookings/:bookingId/reschedule', verifyToken, rescheduleBookingValidationRules, validate, customerBookingController.rescheduleBooking);
-router.get('/addresses/:addressId', verifyToken, customerProfileController.getAddressById);
-// ─── Payment routes ───────────────────────────────────────────────────────────
+
+// ─── Payments ─────────────────────────────────────────────────────────────────
 router.post('/payments/hash', verifyToken, customerPaymentController.generatePaymentHash);
 router.get('/payments/status/:bookingId', verifyToken, customerPaymentController.getPaymentStatus);
-router.post('/subscriptions/initiate', verifyToken, customerSubscriptionController.initiateSubscription);
 
-// Reviews
+// ─── Reviews ──────────────────────────────────────────────────────────────────
 router.get('/reviews/provider/:providerId', customerReviewController.getProviderReviews);
 router.get('/reviews', verifyToken, customerReviewController.getMyReviews);
 router.post('/reviews', verifyToken, createReviewValidationRules, validate, customerReviewController.createReview);
 router.put('/reviews/:reviewId', verifyToken, updateReviewValidationRules, validate, customerReviewController.updateReview);
 router.delete('/reviews/:reviewId', verifyToken, customerReviewController.deleteReview);
 
-// multer for photo uploads
-const multer = require('multer');
-const upload = multer({ dest: '/tmp/uploads/' });
-
-// File a new complaint (with up to 5 evidence photos)
-router.post(
-  '/complaints',
-  upload.array('evidence', 5),
-  complaintController.submitComplaint
-);
-
-// List all complaints this customer has filed
-router.get('/complaints', complaintController.getMyComplaints);
-
-// Get a single complaint's status and timeline (used by complaint-status.tsx)
-router.get('/complaints/:id', complaintController.getComplaintById);
+// ─── Complaints ───────────────────────────────────────────────────────────────
+// Uses the same `upload` instance from middleware/upload (no re-declaration needed)
+router.post('/complaints', verifyToken, upload.array('evidence', 5), customerComplaintController.submitComplaint);
+router.get('/complaints', verifyToken, customerComplaintController.getMyComplaints);
+router.get('/complaints/:id', verifyToken, customerComplaintController.getComplaintById);
 
 module.exports = router;
