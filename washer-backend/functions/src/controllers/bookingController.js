@@ -73,6 +73,7 @@ exports.createBooking = asyncHandler(async (req, res) => {
     status: BOOKING_STATUS.PENDING,
     assignedStaffId: null,
     assignedStaffName: null,
+    providerId: null,
     notes: notes || '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -98,25 +99,53 @@ exports.createBooking = asyncHandler(async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET ALL BOOKINGS (with filters)
 // GET /bookings
+//
+// For WASHER/PROVIDER role: returns bookings assigned to them (by providerId)
+// For CUSTOMER role: returns their own bookings
+// For ADMIN/STAFF: returns all bookings
 // ─────────────────────────────────────────────────────────────────────────────
 exports.getBookings = asyncHandler(async (req, res) => {
   const { status, startDate, endDate } = req.query;
+  const uid = req.user.uid;
+  const role = req.user.role;
 
   let query = db.collection(COLLECTIONS.BOOKINGS);
 
-  if (req.user.role === ROLES.CUSTOMER) {
-    query = query.where('customerId', '==', req.user.uid);
+  // ── Scope by role ─────────────────────────────────────────────────────────
+  if (role === ROLES.CUSTOMER) {
+    // Customer sees only their own bookings
+    query = query.where('customerId', '==', uid);
+  } else if (role === ROLES.WASHER || role === ROLES.PROVIDER || role === 'washer' || role === 'provider') {
+    // Washer sees bookings they have accepted (confirmed/in_progress/completed)
+    // For pending bookings in race mode, the washer app uses Firestore onSnapshot directly
+    query = query.where('providerId', '==', uid);
   }
-  if (status) query = query.where('status', '==', status);
-  if (startDate) query = query.where('scheduledAt', '>=', startDate);
-  if (endDate)   query = query.where('scheduledAt', '<=', endDate);
+  // ADMIN / STAFF: no scope filter — see all bookings
 
-  query = query.orderBy('scheduledAt', 'desc');
+  // ── Status filter ─────────────────────────────────────────────────────────
+  if (status) {
+    query = query.where('status', '==', status);
+  }
+
+  // ── Date filters ──────────────────────────────────────────────────────────
+  if (startDate) query = query.where('scheduledDate', '>=', startDate);
+  if (endDate)   query = query.where('scheduledDate', '<=', endDate);
 
   const snapshot = await query.get();
   const bookings = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-  res.status(200).json({ success: true, count: bookings.length, bookings });
+  // Sort by scheduledDate desc in memory (avoids needing a composite index for every combo)
+  bookings.sort((a, b) => {
+    const dateA = a.scheduledDate || a.scheduledAt || '';
+    const dateB = b.scheduledDate || b.scheduledAt || '';
+    return dateA > dateB ? -1 : 1;
+  });
+
+  res.status(200).json({
+    success: true,
+    count: bookings.length,
+    data: { bookings },
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -130,12 +159,23 @@ exports.getBookingById = asyncHandler(async (req, res) => {
   if (!bookingDoc.exists) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
 
   const bookingData = bookingDoc.data();
+  const role = req.user.role;
 
-  if (req.user.role === ROLES.CUSTOMER && bookingData.customerId !== req.user.uid) {
+  // Authorization
+  if (role === ROLES.CUSTOMER && bookingData.customerId !== req.user.uid) {
     throw new AppError('Not authorized to view this booking', 403, 'FORBIDDEN');
   }
 
-  res.status(200).json({ success: true, booking: { id: bookingDoc.id, ...bookingData } });
+  if ((role === ROLES.WASHER || role === 'washer' || role === 'provider') &&
+      bookingData.providerId !== req.user.uid &&
+      bookingData.status !== BOOKING_STATUS.PENDING) {
+    throw new AppError('Not authorized to view this booking', 403, 'FORBIDDEN');
+  }
+
+  res.status(200).json({
+    success: true,
+    booking: { id: bookingDoc.id, ...bookingData },
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -202,8 +242,7 @@ exports.updateBooking = asyncHandler(async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CANCEL BOOKING
-// DELETE /bookings/:id  (or PATCH /bookings/:id/cancel)
-// Refunds subscription wash if applicable
+// PATCH /bookings/:id/cancel
 // ─────────────────────────────────────────────────────────────────────────────
 exports.cancelBooking = asyncHandler(async (req, res) => {
   const { id } = req.params;
@@ -214,12 +253,10 @@ exports.cancelBooking = asyncHandler(async (req, res) => {
 
   const bookingData = bookingDoc.data();
 
-  // Authorization check
   if (req.user.role === ROLES.CUSTOMER && bookingData.customerId !== req.user.uid) {
     throw new AppError('Not authorized to cancel this booking', 403, 'FORBIDDEN');
   }
 
-  // Only pending or confirmed bookings can be cancelled
   const cancellableStatuses = [BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED];
   if (!cancellableStatuses.includes(bookingData.status)) {
     throw new AppError(
@@ -229,46 +266,22 @@ exports.cancelBooking = asyncHandler(async (req, res) => {
     );
   }
 
-  // ── Subscription refund ───────────────────────────────────────────────────
-  // If this booking used a subscription wash, refund the deducted wash count
+  // Subscription refund
   if (bookingData.paidWithSubscription && bookingData.subscriptionId) {
     try {
       const subDoc = await db.collection('subscriptions').doc(bookingData.subscriptionId).get();
-
-      if (subDoc.exists) {
-        const sub = subDoc.data();
-
-        // Only refund if subscription is still active (not expired/cancelled)
-        if (sub.status === 'active') {
-          await db.collection('subscriptions').doc(bookingData.subscriptionId).update({
-            remainingWashes: admin.firestore.FieldValue.increment(1),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-
-          logger.info('Subscription wash refunded on booking cancellation', {
-            bookingId: id,
-            subscriptionId: bookingData.subscriptionId,
-            customerId: bookingData.customerId,
-          });
-        } else {
-          logger.info('Subscription no longer active — no refund issued', {
-            bookingId: id,
-            subscriptionId: bookingData.subscriptionId,
-            subscriptionStatus: sub.status,
-          });
-        }
+      if (subDoc.exists && subDoc.data().status === 'active') {
+        await db.collection('subscriptions').doc(bookingData.subscriptionId).update({
+          remainingWashes: admin.firestore.FieldValue.increment(1),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        logger.info('Subscription wash refunded on cancellation', { bookingId: id, subscriptionId: bookingData.subscriptionId });
       }
     } catch (refundErr) {
-      // Non-fatal: log but still cancel the booking
-      logger.error('Subscription refund failed (non-fatal)', {
-        bookingId: id,
-        subscriptionId: bookingData.subscriptionId,
-        error: refundErr.message,
-      });
+      logger.error('Subscription refund failed (non-fatal)', { bookingId: id, error: refundErr.message });
     }
   }
 
-  // ── Update booking ────────────────────────────────────────────────────────
   const cancelUpdate = {
     status: BOOKING_STATUS.CANCELLED,
     cancellationReason: reason || 'Cancelled',
@@ -295,7 +308,6 @@ exports.cancelBooking = asyncHandler(async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // ACCEPT BOOKING (race mode)
 // PATCH /bookings/:id/accept
-// Body: { preferredTime?: string }  — washer's chosen arrival time e.g. "09:00"
 // ─────────────────────────────────────────────────────────────────────────────
 exports.acceptBooking = asyncHandler(async (req, res) => {
   const { id } = req.params;
@@ -306,7 +318,6 @@ exports.acceptBooking = asyncHandler(async (req, res) => {
 
   const booking = bookingDoc.data();
 
-  // Race mode: only the first washer to accept wins
   if (booking.status !== BOOKING_STATUS.PENDING) {
     throw new AppError(
       booking.status === BOOKING_STATUS.CONFIRMED
@@ -317,7 +328,6 @@ exports.acceptBooking = asyncHandler(async (req, res) => {
     );
   }
 
-  // Verify washer profile
   const providerDoc = await db.collection('providers').doc(req.user.uid).get();
   if (!providerDoc.exists) throw new AppError('Provider profile not found', 404, 'PROVIDER_NOT_FOUND');
 
@@ -326,7 +336,6 @@ exports.acceptBooking = asyncHandler(async (req, res) => {
     throw new AppError('Your account is not yet verified by admin.', 403, 'NOT_VERIFIED');
   }
 
-  // Determine arrival time
   const arrivalTime = preferredTime || booking.scheduledTime || booking.scheduledAt;
   const timeAdjusted = !!(preferredTime && preferredTime !== (booking.scheduledTime || booking.scheduledAt));
 
@@ -343,6 +352,8 @@ exports.acceptBooking = asyncHandler(async (req, res) => {
   await db.collection(COLLECTIONS.BOOKINGS).doc(id).update({
     status: BOOKING_STATUS.CONFIRMED,
     providerId: req.user.uid,
+    assignedStaffId: req.user.uid,
+    assignedStaffName: provider.displayName || '',
     provider: {
       displayName: provider.displayName || '',
       photoURL: provider.photoURL || null,
@@ -355,12 +366,7 @@ exports.acceptBooking = asyncHandler(async (req, res) => {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
-  logger.info('Booking accepted', {
-    bookingId: id,
-    providerId: req.user.uid,
-    arrivalTime,
-    timeAdjusted,
-  });
+  logger.info('Booking accepted', { bookingId: id, providerId: req.user.uid, arrivalTime, timeAdjusted });
 
   const updatedDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
   const updatedBooking = { id: updatedDoc.id, ...updatedDoc.data() };
@@ -379,8 +385,6 @@ exports.acceptBooking = asyncHandler(async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // DECLINE BOOKING (race mode — does NOT lock the booking)
 // PATCH /bookings/:id/decline
-// Logs the rejection so this washer won't see it again, but other washers
-// can still accept it.
 // ─────────────────────────────────────────────────────────────────────────────
 exports.declineBooking = asyncHandler(async (req, res) => {
   const { id } = req.params;
@@ -391,13 +395,10 @@ exports.declineBooking = asyncHandler(async (req, res) => {
 
   const booking = bookingDoc.data();
 
-  // Can only decline pending bookings
   if (booking.status !== BOOKING_STATUS.PENDING) {
     throw new AppError('Can only decline pending bookings', 400, 'INVALID_STATUS');
   }
 
-  // Log the rejection without touching the booking's status
-  // This preserves race mode — other washers can still accept
   await db.collection('booking_rejections').add({
     bookingId: id,
     providerId: req.user.uid,
@@ -411,54 +412,7 @@ exports.declineBooking = asyncHandler(async (req, res) => {
     reason,
   });
 
-  res.status(200).json({
-    success: true,
-    message: 'Job skipped.',
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ARRIVE AT BOOKING
-// PATCH /bookings/:id/arrive
-// ─────────────────────────────────────────────────────────────────────────────
-exports.arriveBooking = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-
-  const bookingDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
-  if (!bookingDoc.exists) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
-
-  const booking = bookingDoc.data();
-
-  if (booking.providerId !== req.user.uid) {
-    throw new AppError('Not authorized to access this booking', 403, 'FORBIDDEN');
-  }
-
-  if (booking.status !== BOOKING_STATUS.CONFIRMED) {
-    throw new AppError(
-      `Cannot mark as arrived. Current status: "${booking.status}". Validation expects "confirmed".`,
-      400,
-      'INVALID_STATUS'
-    );
-  }
-
-  const updatedStatusHistory = [
-    ...(booking.statusHistory || []),
-    { status: BOOKING_STATUS.ARRIVED, updatedAt: new Date().toISOString(), updatedBy: 'provider' },
-  ];
-
-  await db.collection(COLLECTIONS.BOOKINGS).doc(id).update({
-    status: BOOKING_STATUS.ARRIVED,
-    arrivedAt: admin.firestore.FieldValue.serverTimestamp(),
-    statusHistory: updatedStatusHistory,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
-
-  logger.info('Provider arrived', { bookingId: id, providerId: req.user.uid });
-
-  const updatedDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
-  await safeNotify(notificationService.notifyBookingStatusChange, id, booking.customerId, 'arrived');
-
-  res.status(200).json({ success: true, message: 'Marked arrived. Customer notified.' });
+  res.status(200).json({ success: true, message: 'Job skipped.' });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -506,9 +460,51 @@ exports.startService = asyncHandler(async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ARRIVE AT BOOKING
+// PATCH /bookings/:id/arrive
+// ─────────────────────────────────────────────────────────────────────────────
+exports.arriveBooking = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const bookingDoc = await db.collection(COLLECTIONS.BOOKINGS).doc(id).get();
+  if (!bookingDoc.exists) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+
+  const booking = bookingDoc.data();
+
+  if (booking.providerId !== req.user.uid) {
+    throw new AppError('Not authorized to access this booking', 403, 'FORBIDDEN');
+  }
+
+  if (booking.status !== BOOKING_STATUS.CONFIRMED) {
+    throw new AppError(
+      `Cannot mark as arrived. Current status: "${booking.status}".`,
+      400,
+      'INVALID_STATUS'
+    );
+  }
+
+  const updatedStatusHistory = [
+    ...(booking.statusHistory || []),
+    { status: 'arrived', updatedAt: new Date().toISOString(), updatedBy: 'provider' },
+  ];
+
+  await db.collection(COLLECTIONS.BOOKINGS).doc(id).update({
+    status: 'arrived',
+    arrivedAt: admin.firestore.FieldValue.serverTimestamp(),
+    statusHistory: updatedStatusHistory,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  logger.info('Provider arrived', { bookingId: id, providerId: req.user.uid });
+
+  await safeNotify(notificationService.notifyBookingStatusChange, id, booking.customerId, 'arrived');
+
+  res.status(200).json({ success: true, message: 'Marked arrived. Customer notified.' });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // COMPLETE SERVICE
 // PATCH /bookings/:id/complete
-// Updates provider earnings and total bookings count
 // ─────────────────────────────────────────────────────────────────────────────
 exports.completeService = asyncHandler(async (req, res) => {
   const { id } = req.params;
@@ -535,7 +531,6 @@ exports.completeService = asyncHandler(async (req, res) => {
     { status: BOOKING_STATUS.COMPLETED, updatedAt: new Date().toISOString(), updatedBy: 'provider' },
   ];
 
-  // ── Mark booking complete ─────────────────────────────────────────────────
   await db.collection(COLLECTIONS.BOOKINGS).doc(id).update({
     status: BOOKING_STATUS.COMPLETED,
     completedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -543,7 +538,6 @@ exports.completeService = asyncHandler(async (req, res) => {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
-  // ── Update provider stats + earnings ─────────────────────────────────────
   const earningsAmount = booking.totalPrice || booking.serviceSnapshot?.priceAtBooking || 0;
 
   const providerUpdate = {
@@ -551,14 +545,12 @@ exports.completeService = asyncHandler(async (req, res) => {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
 
-  // If paid (not a free subscription job), update earnings
   if (!booking.paidWithSubscription && earningsAmount > 0) {
     providerUpdate.totalEarnings = admin.firestore.FieldValue.increment(earningsAmount);
   }
 
   await db.collection('providers').doc(req.user.uid).update(providerUpdate);
 
-  // ── Also write to a dedicated earnings ledger ─────────────────────────────
   if (!booking.paidWithSubscription && earningsAmount > 0) {
     const earningsRef = db.collection('provider_earnings').doc(req.user.uid);
     const earningsDoc = await earningsRef.get();
@@ -598,7 +590,7 @@ exports.completeService = asyncHandler(async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BOOKING STATS (admin/staff only)
+// BOOKING STATS
 // GET /bookings/stats
 // ─────────────────────────────────────────────────────────────────────────────
 exports.getBookingStats = asyncHandler(async (req, res) => {
