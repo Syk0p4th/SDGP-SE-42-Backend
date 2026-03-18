@@ -2,20 +2,20 @@ const { admin, db } = require('../../config/firebase');
 const { successResponse, errorResponse } = require('../../utils/response');
 
 // ============================================================
-// CREATE REVIEW
+// CREATE REVIEW  — drop-in replacement for exports.createReview
 // POST /reviews
 // ============================================================
 exports.createReview = async (req, res) => {
   try {
     const { uid } = req.user;
-    const { bookingId, rating, comment } = req.body;
+    const { bookingId, rating, comment, tags } = req.body;
+
+    if (!bookingId) return errorResponse(res, 'Booking ID is required', 400);
+    if (!rating || rating < 1 || rating > 5) return errorResponse(res, 'Rating must be between 1 and 5', 400);
 
     // Validate booking exists
     const bookingDoc = await db.collection('bookings').doc(bookingId).get();
-
-    if (!bookingDoc.exists) {
-      return errorResponse(res, 'Booking not found', 404);
-    }
+    if (!bookingDoc.exists) return errorResponse(res, 'Booking not found', 404);
 
     const booking = bookingDoc.data();
 
@@ -40,13 +40,21 @@ exports.createReview = async (req, res) => {
       return errorResponse(res, 'You have already reviewed this booking', 400);
     }
 
+    // Resolve provider ID — check both fields for race mode compatibility
+    const resolvedProviderId = booking.providerId || booking.assignedStaffId || null;
+
+    if (!resolvedProviderId) {
+      return errorResponse(res, 'No washer assigned to this booking', 400);
+    }
+
     // Create review
     const reviewData = {
       bookingId,
       customerId: uid,
-      providerId: booking.providerId,
+      providerId: resolvedProviderId,
       rating: Number(rating),
-      comment: comment || null,
+      comment: comment?.trim() || null,
+      tags: Array.isArray(tags) ? tags : [],
       providerResponse: null,
       providerResponseAt: null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -56,7 +64,7 @@ exports.createReview = async (req, res) => {
     const reviewRef = await db.collection('reviews').add(reviewData);
 
     // Update provider rating
-    await updateProviderRating(booking.providerId);
+    await updateProviderRating(resolvedProviderId);
 
     // Fetch created review
     const createdReview = await reviewRef.get();
