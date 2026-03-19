@@ -12,7 +12,7 @@ const customerNotificationController = require('../controllers/customer/customer
 const customerComplaintController = require('../controllers/customer/customerComplaintController');
 const customerPaymentController = require('../controllers/customer/customerPaymentController');
 const { verifyToken } = require('../middleware/auth');
-const { upload } = require('../middleware/upload'); // ← single source of truth for multer
+const { upload } = require('../middleware/upload');
 const {
   loginValidationRules,
   signupValidationRules,
@@ -119,9 +119,8 @@ router.put('/reviews/:reviewId', verifyToken, updateReviewValidationRules, valid
 router.delete('/reviews/:reviewId', verifyToken, customerReviewController.deleteReview);
 
 // ─── Complaints ───────────────────────────────────────────────────────────────
-// Uses the same `upload` instance from middleware/upload (no re-declaration needed)
-router.post('/complaints', verifyToken, upload.array('evidence', 5), customerComplaintController.submitComplaint);
+router.post('/complaints', verifyToken, customerComplaintController.createComplaint);
 router.get('/complaints', verifyToken, customerComplaintController.getMyComplaints);
-router.get('/complaints/:id', verifyToken, customerComplaintController.getComplaintById);
+router.get('/complaints/:complaintId', verifyToken, customerComplaintController.getComplaintById);
 
 module.exports = router;

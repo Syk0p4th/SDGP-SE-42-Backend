@@ -1,114 +1,30 @@
-const { db } = require('../config/firebase');
-const admin = require('firebase-admin');
-
-/**
- * Get certification progress (trainee view)
- * GET /certification/progress
- */
-exports.getProgress = async (req, res) => {
-  try {
-    const { uid } = req.user;
-
-    const providerDoc = await db.collection('providers').doc(uid).get();
-    if (!providerDoc.exists) {
-      return res.status(404).json({ success: false, message: 'Provider not found' });
-    }
-
-    const provider = providerDoc.data();
-
-    const progress = {
-      certificationStatus: provider.certificationStatus,
-      certificationPath: provider.certificationPath,
-      isActive: provider.isActive,
-      isVerified: provider.isVerified,
-    };
-
-    if (provider.certificationPath === 'field_certification' && provider.fieldCertification) {
-      const completed = provider.fieldCertification.completedSessions || 0;
-      const required = provider.fieldCertification.requiredSessions || 3;
-
-      // Attach mentor profiles
-      let mentors = [];
-      if (provider.fieldCertification.assignedMentors?.length > 0) {
-        const mentorDocs = await Promise.all(
-          provider.fieldCertification.assignedMentors.map((id) =>
-            db.collection('providers').doc(id).get()
-          )
-        );
-        mentors = mentorDocs
-          .filter((d) => d.exists)
-          .map((d) => ({
-            uid: d.id,
-            displayName: d.data().displayName,
-            photoURL: d.data().photoURL || null,
-            rating: d.data().rating || null,
-          }));
-      }
-
-      progress.fieldCertification = {
-        ...provider.fieldCertification,
-        completedSessions: completed,
-        requiredSessions: required,
-        progressPercentage: Math.round((completed / required) * 100),
-        mentors,
-      };
-    }
-
-    if (provider.certificationPath === 'training_center' && provider.trainingCenter) {
-      progress.trainingCenter = provider.trainingCenter;
-    }
-
-    if (provider.professionalExperience) {
-      progress.professionalExperience = provider.professionalExperience;
-    }
-
-    if (provider.certificationReview) {
-      progress.certificationReview = provider.certificationReview;
-    }
-
-    res.status(200).json({ success: true, data: { progress } });
-  } catch (error) {
-    console.error('Get certification progress error:', error);
-    res.status(500).json({ success: false, message: 'Failed to retrieve progress' });
-  }
-};
-
-/**
- * Get available training centers
- * GET /certification/training-centers
- */
-exports.getTrainingCenters = async (req, res) => {
-  try {
-    const snapshot = await db
-      .collection('training_centers')
-      .where('isActive', '==', true)
-      .where('isVerified', '==', true)
-      .get();
-
-    const centers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-
-    res.status(200).json({ success: true, data: { centers } });
-  } catch (error) {
-    console.error('Get training centers error:', error);
-    res.status(500).json({ success: false, message: 'Failed to retrieve training centers' });
-  }
-};
-
-/**
- * Get my assigned trainees (mentor view)
- * GET /certification/my-trainees
- */
 exports.getMyTrainees = async (req, res) => {
   try {
     const { uid } = req.user;
 
-    // Verify caller is certified
     const mentorDoc = await db.collection('providers').doc(uid).get();
     if (!mentorDoc.exists) {
       return res.status(404).json({ success: false, message: 'Provider not found' });
     }
-    if (mentorDoc.data().certificationStatus !== 'certified') {
-      return res.status(403).json({ success: false, message: 'Only certified washers can access mentor features' });
+
+    const mentorData = mentorDoc.data();
+
+    // Must be certified
+    if (mentorData.certificationStatus !== 'certified') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only certified washers can access mentor features',
+        code: 'NOT_CERTIFIED',
+      });
+    }
+
+    // Must have accepted the mentorship agreement
+    if (!mentorData.isMentor && !mentorData.mentorshipAgreement?.accepted) {
+      return res.status(403).json({
+        success: false,
+        message: 'You must accept the Mentorship Program agreement before accessing trainees.',
+        code: 'AGREEMENT_REQUIRED',
+      });
     }
 
     const snapshot = await db
@@ -124,7 +40,6 @@ exports.getMyTrainees = async (req, res) => {
       const completedSessions = data.fieldCertification?.completedSessions || 0;
       const requiredSessions = data.fieldCertification?.requiredSessions || 3;
 
-      // Average rating from MY evaluations only
       let averageRating = null;
       if (myEvaluations.length > 0) {
         const total = myEvaluations.reduce((sum, e) => {
@@ -170,7 +85,6 @@ exports.submitEvaluation = async (req, res) => {
     const { uid } = req.user;
     const { traineeId, bookingId, ratings, feedback, notes } = req.body;
 
-    // Validate required fields
     if (!traineeId || !ratings || !feedback) {
       return res.status(400).json({ success: false, message: 'traineeId, ratings, and feedback are required' });
     }
@@ -179,7 +93,6 @@ exports.submitEvaluation = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Feedback must be at least 50 characters' });
     }
 
-    // Validate each rating
     const ratingFields = ['technique', 'speed', 'customerService', 'safety'];
     for (const field of ratingFields) {
       const val = Number(ratings[field]);
@@ -188,13 +101,30 @@ exports.submitEvaluation = async (req, res) => {
       }
     }
 
-    // Verify mentor is certified
+    // Verify mentor is certified AND has accepted agreement
     const mentorDoc = await db.collection('providers').doc(uid).get();
-    if (!mentorDoc.exists || mentorDoc.data().certificationStatus !== 'certified') {
-      return res.status(403).json({ success: false, message: 'Only certified providers can submit evaluations' });
+    if (!mentorDoc.exists) {
+      return res.status(404).json({ success: false, message: 'Mentor profile not found' });
     }
 
-    // Verify trainee
+    const mentorData = mentorDoc.data();
+
+    if (mentorData.certificationStatus !== 'certified') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only certified providers can submit evaluations',
+      });
+    }
+
+    // Must have accepted the mentorship agreement
+    if (!mentorData.isMentor && !mentorData.mentorshipAgreement?.accepted) {
+      return res.status(403).json({
+        success: false,
+        message: 'You must accept the Mentorship Program agreement first.',
+        code: 'AGREEMENT_REQUIRED',
+      });
+    }
+
     const traineeDoc = await db.collection('providers').doc(traineeId).get();
     if (!traineeDoc.exists) {
       return res.status(404).json({ success: false, message: 'Trainee not found' });
@@ -210,7 +140,6 @@ exports.submitEvaluation = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Trainee is not currently in training' });
     }
 
-    // Verify this mentor is assigned to this trainee
     const assignedMentors = trainee.fieldCertification?.assignedMentors || [];
     if (!assignedMentors.includes(uid)) {
       return res.status(403).json({ success: false, message: 'You are not assigned as a mentor for this trainee' });
@@ -223,14 +152,13 @@ exports.submitEvaluation = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Trainee has already completed all required sessions' });
     }
 
-    // Build evaluation
     const ratingValues = ratingFields.map((f) => Number(ratings[f]));
     const overallRating = ratingValues.reduce((sum, r) => sum + r, 0) / ratingValues.length;
 
     const evaluation = {
       id: `eval_${Date.now()}`,
       mentorId: uid,
-      mentorName: mentorDoc.data().displayName || 'Unknown',
+      mentorName: mentorData.displayName || 'Unknown',
       bookingId: bookingId || null,
       ratings: {
         technique: Number(ratings.technique),
@@ -244,7 +172,6 @@ exports.submitEvaluation = async (req, res) => {
       submittedAt: new Date().toISOString(),
     };
 
-    // Also store in certification_evaluations collection (keep your existing pattern)
     await db.collection('certification_evaluations').add({
       ...evaluation,
       traineeId,
@@ -256,7 +183,6 @@ exports.submitEvaluation = async (req, res) => {
     const newCompletedSessions = completedSessions + 1;
     const isComplete = newCompletedSessions >= requiredSessions;
 
-    // Update trainee document
     await db.collection('providers').doc(traineeId).update({
       'fieldCertification.evaluations': [...existingEvaluations, evaluation],
       'fieldCertification.completedSessions': newCompletedSessions,

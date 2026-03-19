@@ -1,193 +1,168 @@
-// customer-backend/functions/src/controllers/complaintController.js
-const admin = require('firebase-admin');
-const db = admin.firestore();
+const { admin, db } = require('../../config/firebase');
+const { successResponse, errorResponse } = require('../../utils/response');
 
-// ─── POST /api/customer/complaints ───────────────────────────────────────────
-// Customer files a new complaint against a completed booking
-exports.submitComplaint = async (req, res) => {
+const PRIORITY_MAP = {
+  damage:         'critical',
+  safety:         'critical',
+  no_show:        'high',
+  late:           'high',
+  overcharged:    'high',
+  poor_quality:   'medium',
+  unprofessional: 'medium',
+  incomplete:     'medium',
+  other:          'low',
+};
+
+// ============================================================
+// CREATE COMPLAINT
+// POST /complaints
+// Body: { bookingId, reason, description, requestRefund,
+//         refundAmount, evidencePhotos: string[] }
+// ============================================================
+exports.createComplaint = async (req, res) => {
   try {
-    const customerId = req.user.uid;
-    const { bookingId, reason, description, requestRefund, refundAmount } = req.body;
+    const { uid } = req.user;
+    const {
+      bookingId,
+      reason,
+      description,
+      requestRefund,
+      refundAmount,
+      evidencePhotos,
+    } = req.body;
 
-    // Validate required fields
-    if (!bookingId || !reason || !description) {
-      return res.status(400).json({
-        success: false,
-        message: 'bookingId, reason, and description are required.',
-      });
-    }
-    if (description.trim().length < 20) {
-      return res.status(400).json({
-        success: false,
-        message: 'Description must be at least 20 characters.',
-      });
-    }
-
-    // Confirm booking belongs to this customer and is in a complaintable state
-    const bookingSnap = await db.collection('bookings').doc(bookingId).get();
-    if (!bookingSnap.exists) {
-      return res.status(404).json({ success: false, message: 'Booking not found.' });
-    }
-    const booking = bookingSnap.data();
-
-    if (booking.customerId !== customerId) {
-      return res.status(403).json({ success: false, message: 'Not authorized.' });
-    }
-    if (!['completed', 'in_progress'].includes(booking.status)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Complaints can only be filed on completed or in-progress bookings.',
-      });
+    if (!bookingId) return errorResponse(res, 'Booking ID is required', 400);
+    if (!reason)    return errorResponse(res, 'Reason is required', 400);
+    if (!description || description.trim().length < 20) {
+      return errorResponse(res, 'Please provide more detail (at least 20 characters)', 400);
     }
 
-    // Prevent duplicate complaints for the same booking
-    const existing = await db
+    // Validate booking exists and belongs to customer
+    const bookingDoc = await db.collection('bookings').doc(bookingId).get();
+    if (!bookingDoc.exists) return errorResponse(res, 'Booking not found', 404);
+
+    const booking = bookingDoc.data();
+    if (booking.customerId !== uid) {
+      return errorResponse(res, 'You can only complain about your own bookings', 403);
+    }
+
+    // Prevent duplicate complaints for same booking
+    const existingSnap = await db
       .collection('complaints')
       .where('bookingId', '==', bookingId)
-      .where('customerId', '==', customerId)
+      .where('reportedBy', '==', uid)
       .limit(1)
       .get();
-    if (!existing.empty) {
-      return res.status(409).json({
-        success: false,
-        message: 'A complaint has already been filed for this booking.',
-      });
+
+    if (!existingSnap.empty) {
+      return errorResponse(res, 'You have already filed a complaint for this booking', 400);
     }
 
-    // Handle evidence photo file uploads
-    // Files come via multipart/form-data — use multer middleware on the route
-    // In production, upload each file to Firebase Storage and store the download URL
-    // For now, store the local paths / filenames returned by multer
-    const evidencePhotos = req.files ? req.files.map((f) => f.path || f.filename) : [];
-
-    const ref = db.collection('complaints').doc();
-    const complaint = {
-      id: ref.id,
-      bookingId,
-      customerId,
-      washerId: booking.providerId,
-      reason,
+    const complaintData = {
+      type: 'customer',
+      status: 'open',
+      priority: PRIORITY_MAP[reason] || 'low',
+      category: reason,
+      subject: reason.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
       description: description.trim(),
-      requestRefund: requestRefund === 'true' || requestRefund === true,
-      refundAmount:
-        (requestRefund === 'true' || requestRefund === true) && refundAmount
-          ? parseFloat(refundAmount)
-          : null,
+      reportedBy: uid,
+      reportedByName: req.user.displayName || null,
+      reportedAgainst: booking.providerId || booking.assignedStaffId || null,
+      reportedAgainstName: booking.assignedStaffName || null,
+      bookingId,
+      evidencePhotos: Array.isArray(evidencePhotos) ? evidencePhotos : [],
+      requestRefund: !!requestRefund,
+      refundAmount: requestRefund && refundAmount ? Number(refundAmount) : null,
       currency: booking.currency || 'LKR',
-      evidencePhotos,
-      // Washer's pre-existing damage photos — pulled from the booking document
-      washerPreDamagePhotos: booking.preExistingDamagePhotos || [],
-      status: 'submitted',
-      adminNote: null,
-      adminId: null,
-      resolution: null,
-      refundApproved: 0,
-      penaltyApplied: 0,
+      adminNotes: '',
+      adminNote: '',   // shown to customer
+      resolvedBy: null,
+      resolvedAt: null,
+      submittedAt: new Date().toISOString(),
+      // Timeline for complaint-status.tsx
       timeline: [
-        { event: 'Complaint submitted', time: new Date().toISOString(), done: true },
-        { event: 'Admin review started', time: null, done: false },
-        { event: 'Washer contacted for response', time: null, done: false },
-        { event: 'Decision issued', time: null, done: false },
+        { event: 'Complaint submitted',          time: new Date().toISOString(), done: true  },
+        { event: 'Admin review started',          time: null,                    done: false },
+        { event: 'Washer contacted for response', time: null,                    done: false },
+        { event: 'Decision issued',               time: null,                    done: false },
       ],
-      submittedAt: admin.firestore.FieldValue.serverTimestamp(),
+      // Booking snapshot for complaint-status.tsx
+      booking: {
+        service: booking.service || null,
+        vehicle: booking.vehicle || null,
+        provider: booking.provider || null,
+      },
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
-    await ref.set(complaint);
+    const complaintRef = await db.collection('complaints').add(complaintData);
 
-    // Create an admin notification so the admin panel can pick this up
-    await db.collection('admin_notifications').add({
-      type: 'new_complaint',
-      complaintId: ref.id,
-      bookingId,
-      customerId,
-      washerId: booking.providerId,
-      message: `New complaint filed for booking ${bookingId}`,
-      read: false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    return successResponse(
+      res,
+      { complaint: { id: complaintRef.id, ...complaintData } },
+      'Complaint submitted successfully',
+      201
+    );
 
-    return res.status(201).json({
-      success: true,
-      message: 'Complaint submitted successfully.',
-      data: { complaintId: ref.id },
-    });
   } catch (error) {
-    console.error('submitComplaint error:', error);
-    return res.status(500).json({ success: false, message: 'Server error.' });
+    console.error('Create complaint error:', error);
+    return errorResponse(res, 'Failed to submit complaint', 500);
   }
 };
 
-// ─── GET /api/customer/complaints ────────────────────────────────────────────
-// Returns all complaints filed by the logged-in customer
+// ============================================================
+// GET MY COMPLAINTS
+// GET /complaints
+// ============================================================
 exports.getMyComplaints = async (req, res) => {
   try {
-    const customerId = req.user.uid;
-    const snap = await db
+    const { uid } = req.user;
+
+    const snapshot = await db
       .collection('complaints')
-      .where('customerId', '==', customerId)
-      .orderBy('submittedAt', 'desc')
+      .where('reportedBy', '==', uid)
       .get();
 
-    const complaints = snap.docs.map((d) => {
-      const data = d.data();
-      return {
-        ...data,
-        submittedAt: data.submittedAt?.toDate?.()?.toISOString?.() ?? null,
-        updatedAt: data.updatedAt?.toDate?.()?.toISOString?.() ?? null,
-      };
-    });
+    const complaints = snapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .sort((a, b) => {
+        const aTime = a.createdAt?._seconds || 0;
+        const bTime = b.createdAt?._seconds || 0;
+        return bTime - aTime;
+      });
 
-    return res.json({ success: true, data: { complaints } });
+    return successResponse(res, { complaints }, 'Complaints retrieved successfully');
+
   } catch (error) {
-    console.error('getMyComplaints error:', error);
-    return res.status(500).json({ success: false, message: 'Server error.' });
+    console.error('Get complaints error:', error);
+    return errorResponse(res, 'Failed to retrieve complaints', 500);
   }
 };
 
-// ─── GET /api/customer/complaints/:id ────────────────────────────────────────
-// Returns a single complaint with booking context (for the status tracking screen)
+// ============================================================
+// GET SINGLE COMPLAINT
+// GET /complaints/:complaintId
+// ============================================================
 exports.getComplaintById = async (req, res) => {
   try {
-    const customerId = req.user.uid;
-    const { id } = req.params;
+    const { uid } = req.user;
+    const { complaintId } = req.params;
 
-    const snap = await db.collection('complaints').doc(id).get();
-    if (!snap.exists) {
-      return res.status(404).json({ success: false, message: 'Complaint not found.' });
-    }
-    const complaint = snap.data();
+    const complaintDoc = await db.collection('complaints').doc(complaintId).get();
+    if (!complaintDoc.exists) return errorResponse(res, 'Complaint not found', 404);
 
-    if (complaint.customerId !== customerId) {
-      return res.status(403).json({ success: false, message: 'Not authorized.' });
-    }
+    const complaint = { id: complaintDoc.id, ...complaintDoc.data() };
 
-    // Attach a booking summary for the status screen to display
-    let booking = null;
-    const bookingSnap = await db.collection('bookings').doc(complaint.bookingId).get();
-    if (bookingSnap.exists) {
-      const b = bookingSnap.data();
-      booking = {
-        service: b.service,
-        vehicle: b.vehicle,
-        provider: b.provider,
-        scheduledDate: b.scheduledDate,
-      };
+    // Only the reporter can view their own complaint
+    if (complaint.reportedBy !== uid) {
+      return errorResponse(res, 'Complaint not found', 404);
     }
 
-    return res.json({
-      success: true,
-      data: {
-        complaint: {
-          ...complaint,
-          submittedAt: complaint.submittedAt?.toDate?.()?.toISOString?.() ?? null,
-          updatedAt: complaint.updatedAt?.toDate?.()?.toISOString?.() ?? null,
-          booking,
-        },
-      },
-    });
+    return successResponse(res, { complaint }, 'Complaint retrieved successfully');
+
   } catch (error) {
-    console.error('getComplaintById error:', error);
-    return res.status(500).json({ success: false, message: 'Server error.' });
+    console.error('Get complaint error:', error);
+    return errorResponse(res, 'Failed to retrieve complaint', 500);
   }
 };
