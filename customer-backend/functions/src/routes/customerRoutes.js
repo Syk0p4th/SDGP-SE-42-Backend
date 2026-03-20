@@ -125,4 +125,7 @@ router.post('/complaints', verifyToken, customerComplaintController.createCompla
 router.get('/complaints', verifyToken, customerComplaintController.getMyComplaints);
 router.get('/complaints/:complaintId', verifyToken, customerComplaintController.getComplaintById);
 
+//Email verification
+router.post('/auth/send-verification-email', verifyToken, customerAuthController.sendVerificationEmail);
+router.post('/auth/verify-email', customerAuthController.verifyEmail);
 module.exports = router;

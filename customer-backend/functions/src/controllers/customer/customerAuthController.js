@@ -1,25 +1,35 @@
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const { admin, db, auth } = require('../../config/firebase');
 const { clientAuth } = require('../../config/firebaseclient');
 const {
   verifyPasswordResetCode,
   confirmPasswordReset,
   applyActionCode,
-  checkActionCode
+  checkActionCode,
 } = require('firebase/auth');
 const { successResponse, errorResponse } = require('../../utils/response');
 const { handleAuthError } = require('../../utils/errorHandling');
-/**
- * Customer Sign In
- * Receives email and password from Flutter app
- * Verifies credentials and checks if user exists in database
- */
+
+// ── Email transporter ─────────────────────────────────────────────────────────
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS, // use Gmail App Password if 2FA enabled
+  },
+});
+
+// ============================================================
+// SIGN IN
+// POST /auth/signin
+// ============================================================
 exports.signIn = async (req, res) => {
   try {
     const { email, password } = req.body;
 
     console.log(`Login attempt for email: ${email}`);
 
-    // Step 1: Get user by email from Firebase Auth
     let userRecord;
     try {
       userRecord = await auth.getUserByEmail(email);
@@ -30,39 +40,23 @@ exports.signIn = async (req, res) => {
       throw error;
     }
 
-    // Step 2: Verify the user exists in our customers collection
     const customerDoc = await db.collection('customers').doc(userRecord.uid).get();
-
     if (!customerDoc.exists) {
-      return errorResponse(
-        res,
-        'Customer account not found. Please sign up first.',
-        404
-      );
+      return errorResponse(res, 'Customer account not found. Please sign up first.', 404);
     }
 
     const customerData = customerDoc.data();
-
-    // Step 3: Check if customer account is active
     if (customerData.isDisabled) {
-      return errorResponse(
-        res,
-        'Your account has been disabled. Please contact support.',
-        403
-      );
+      return errorResponse(res, 'Your account has been disabled. Please contact support.', 403);
     }
 
-    // Step 4: Create a custom token for the user
-    // The react app will use this token to signInWithCustomToken
     const customToken = await auth.createCustomToken(userRecord.uid);
 
-    // Step 5: Update last login timestamp
     await db.collection('customers').doc(userRecord.uid).update({
       lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Step 6: Return success response with user data and token
     return successResponse(
       res,
       {
@@ -75,47 +69,42 @@ exports.signIn = async (req, res) => {
           photoURL: customerData.photoURL || null,
           emailVerified: userRecord.emailVerified,
           userType: 'customer',
-          createdAt: customerData.createdAt
-        }
+          createdAt: customerData.createdAt,
+        },
       },
       'Login successful',
       200
     );
-
   } catch (error) {
     console.error('Login error:', error);
-
-    // Handle specific Firebase Auth errors
-    if (error.code && error.code.startsWith('auth/')) {
+    if (error.code && typeof error.code === 'string' && error.code.startsWith('auth/')) {
       const { message } = handleAuthError(error);
       return errorResponse(res, message, 401);
     }
-
     return errorResponse(res, 'Login failed. Please try again.', 500);
   }
 };
 
-/**
- * Customer Sign Up
- */
+// ============================================================
+// SIGN UP
+// POST /auth/signup
+// ============================================================
 exports.signUp = async (req, res) => {
   try {
     const { email, password, displayName, phoneNumber } = req.body;
 
     console.log(`Signup attempt for email: ${email}`);
 
-    // Step 1: Create Firebase Auth user
     const userRecord = await auth.createUser({
       email,
       password,
       displayName,
       phoneNumber: phoneNumber || null,
-      emailVerified: false
+      emailVerified: false,
     });
 
     console.log(`Firebase user created: ${userRecord.uid}`);
 
-    // Step 2: Create customer document in Firestore
     const customerData = {
       uid: userRecord.uid,
       email,
@@ -125,25 +114,21 @@ exports.signUp = async (req, res) => {
       userType: 'customer',
       subscription: 'none',
       isSubscribed: false,
+      emailVerified: false,
       addresses: [],
       favoriteProviders: [],
       isDisabled: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      lastLoginAt: null
+      lastLoginAt: null,
     };
 
     await db.collection('customers').doc(userRecord.uid).set(customerData);
 
-    console.log(`Customer document created in Firestore`);
+    console.log('Customer document created in Firestore');
 
-    // Step 3: Create custom token
     const customToken = await auth.createCustomToken(userRecord.uid);
 
-    // Step 4: Send verification email (optional)
-    // You can implement this later with email service
-
-    // Step 5: Return success response
     return successResponse(
       res,
       {
@@ -154,120 +139,360 @@ exports.signUp = async (req, res) => {
           displayName,
           phoneNumber,
           userType: 'customer',
-          emailVerified: false
-        }
+          emailVerified: false,
+        },
       },
       'Account created successfully',
       201
     );
-
   } catch (error) {
     console.error('Signup error:', error);
-
-    // Handle specific errors
-    if (error.code === 'auth/email-already-exists') {
-      return errorResponse(res, 'Email already in use', 400);
-    }
-
-    if (error.code === 'auth/invalid-email') {
-      return errorResponse(res, 'Invalid email address', 400);
-    }
-
-    if (error.code === 'auth/weak-password') {
-      return errorResponse(res, 'Password is too weak', 400);
-    }
-
+    if (error.code === 'auth/email-already-exists') return errorResponse(res, 'Email already in use', 400);
+    if (error.code === 'auth/invalid-email') return errorResponse(res, 'Invalid email address', 400);
+    if (error.code === 'auth/weak-password') return errorResponse(res, 'Password is too weak', 400);
     return errorResponse(res, 'Signup failed. Please try again.', 500);
   }
 };
 
-/**
- * Get Customer Profile
- */
+// ============================================================
+// SEND VERIFICATION EMAIL — OTP via Nodemailer
+// POST /auth/send-verification-email
+// Body: { email }
+// No auth required — called during signup before user is logged in
+// ============================================================
+exports.sendVerificationEmail = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ success: false, message: 'Email is required' });
+
+    // Generate 6-digit OTP
+    const code = crypto.randomInt(100000, 999999).toString();
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    // Store in Firestore
+    await db.collection('email_verifications').doc(email).set({
+      code,
+      expiresAt,
+      attempts: 0,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Send email
+    await transporter.sendMail({
+      from: `"WashXpress" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: 'Your WashXpress Verification Code',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #f8fafc; border-radius: 16px;">
+          <div style="text-align: center; margin-bottom: 24px;">
+            <h1 style="color: #0d1629; font-size: 24px; margin: 0;">WashXpress</h1>
+          </div>
+          <div style="background: #fff; border-radius: 12px; padding: 32px; text-align: center;">
+            <h2 style="color: #0d1629; margin-bottom: 8px;">Verify your email</h2>
+            <p style="color: #64748b; margin-bottom: 24px;">Enter this code in the app to verify your email address.</p>
+            <div style="background: #eff6ff; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+              <span style="font-size: 40px; font-weight: 800; color: #0ca6e8; letter-spacing: 8px;">${code}</span>
+            </div>
+            <p style="color: #94a3b8; font-size: 13px;">This code expires in <strong>10 minutes</strong>.</p>
+            <p style="color: #94a3b8; font-size: 13px;">If you didn't request this, you can safely ignore this email.</p>
+          </div>
+          <p style="text-align: center; color: #cbd5e1; font-size: 12px; margin-top: 24px;">© 2025 WashXpress · Sri Lanka</p>
+        </div>
+      `,
+    });
+
+    console.log(`Verification email sent to: ${email}`);
+    return res.status(200).json({ success: true, message: 'Verification code sent to your email.' });
+
+  } catch (error) {
+    console.error('Send verification email error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to send verification email.' });
+  }
+};
+
+// ============================================================
+// VERIFY EMAIL — OTP code (matches sendVerificationEmail above)
+// POST /auth/verify-email
+// Body: { email, code }
+// No auth required — called during signup before user is logged in
+// ============================================================
+exports.verifyEmail = async (req, res) => {
+  try {
+    const { email, code } = req.body;
+    if (!email || !code) {
+      return res.status(400).json({ success: false, message: 'Email and code are required' });
+    }
+
+    const verDoc = await db.collection('email_verifications').doc(email).get();
+    if (!verDoc.exists) {
+      return res.status(400).json({
+        success: false,
+        message: 'No verification code found. Please request a new one.',
+      });
+    }
+
+    const data = verDoc.data();
+
+    // Too many attempts
+    if (data.attempts >= 5) {
+      await db.collection('email_verifications').doc(email).delete();
+      return res.status(400).json({
+        success: false,
+        message: 'Too many attempts. Please request a new code.',
+      });
+    }
+
+    // Expired
+    if (Date.now() > data.expiresAt) {
+      await db.collection('email_verifications').doc(email).delete();
+      return res.status(400).json({
+        success: false,
+        message: 'Code has expired. Please request a new one.',
+      });
+    }
+
+    // Wrong code — increment attempts
+    if (data.code !== code) {
+      await db.collection('email_verifications').doc(email).update({
+        attempts: admin.firestore.FieldValue.increment(1),
+      });
+      return res.status(400).json({ success: false, message: 'Incorrect code. Please try again.' });
+    }
+
+    // ✅ Correct — clean up verification doc
+    await db.collection('email_verifications').doc(email).delete();
+
+    // Mark customer as email verified in Firestore
+    const usersSnap = await db.collection('customers').where('email', '==', email).limit(1).get();
+    if (!usersSnap.empty) {
+      await usersSnap.docs[0].ref.update({
+        emailVerified: true,
+        emailVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+
+    // Also update Firebase Auth emailVerified flag (best effort)
+    try {
+      const userRecord = await admin.auth().getUserByEmail(email);
+      await admin.auth().updateUser(userRecord.uid, { emailVerified: true });
+      console.log(`Firebase Auth emailVerified updated for: ${email}`);
+    } catch (authErr) {
+      console.warn('Failed to update Firebase Auth emailVerified (non-fatal):', authErr.message);
+    }
+
+    return res.status(200).json({ success: true, message: 'Email verified successfully.' });
+
+  } catch (error) {
+    console.error('Verify email error:', error);
+    return res.status(500).json({ success: false, message: 'Verification failed.' });
+  }
+};
+
+// ============================================================
+// CHECK EMAIL VERIFICATION STATUS
+// GET /auth/check-email-verification
+// ============================================================
+exports.checkEmailVerificationStatus = async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const userRecord = await auth.getUser(uid);
+
+    if (userRecord.emailVerified) {
+      await db.collection('customers').doc(uid).update({
+        emailVerified: true,
+        emailVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+
+    return successResponse(
+      res,
+      { emailVerified: userRecord.emailVerified, email: userRecord.email },
+      'Email verification status retrieved'
+    );
+  } catch (error) {
+    console.error('Check verification error:', error);
+    return errorResponse(res, 'Failed to check verification status', 500);
+  }
+};
+
+// ============================================================
+// GET PROFILE
+// GET /auth/profile
+// ============================================================
 exports.getProfile = async (req, res) => {
   try {
     const uid = req.user.uid;
     const customerRef = db.collection('customers').doc(uid);
     const customerDoc = await customerRef.get();
 
-    if (!customerDoc.exists) {
-      return errorResponse(res, 'Customer not found', 404);
-    }
+    if (!customerDoc.exists) return errorResponse(res, 'Customer not found', 404);
 
     const customerData = customerDoc.data();
 
-    // Fetch subcollections and auxiliary data in parallel
     const [addressesSnapshot, vehiclesSnapshot, categoriesSnapshot, servicesSnapshot] = await Promise.all([
       customerRef.collection('addresses').get(),
       customerRef.collection('vehicles').where('isActive', '==', true).get(),
       db.collection('categories').where('isActive', '==', true).get(),
-      db.collection('services').where('isActive', '==', true).limit(50).get()
+      db.collection('services').where('isActive', '==', true).limit(50).get(),
     ]);
 
-    const addresses = addressesSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+    const addresses = addressesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const vehicles = vehiclesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const categories = categoriesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const services = servicesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-    const vehicles = vehiclesSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
-
-    const categories = categoriesSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-
-    const services = servicesSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-
-    return successResponse(
-      res,
-      {
-        ...customerData,
-        uid,
-        addresses,
-        vehicles,
-        categories,
-        services
-      },
-      'Profile retrieved successfully'
-    );
-
+    return successResponse(res, { ...customerData, uid, addresses, vehicles, categories, services }, 'Profile retrieved successfully');
   } catch (error) {
     console.error('Get profile error:', error);
     return errorResponse(res, 'Failed to retrieve profile', 500);
   }
 };
 
-/**
- * Refresh Token
- * Firebase automatically handles token refresh on the client side
- * This endpoint is mainly for validation and getting updated user data
- */
-exports.refreshToken = async (req, res) => {
+// ============================================================
+// UPDATE PROFILE
+// PATCH /auth/profile
+// ============================================================
+exports.updateProfile = async (req, res) => {
   try {
-    // User is already authenticated via verifyToken middleware
+    const uid = req.user.uid;
+    const { displayName, phoneNumber, bio } = req.body;
+
+    console.log(`Updating profile for user: ${uid}`);
+
+    const updates = {};
+
+    if (displayName !== undefined) {
+      if (displayName.trim().length < 2) return errorResponse(res, 'Display name must be at least 2 characters', 400);
+      updates.displayName = displayName.trim();
+      await auth.updateUser(uid, { displayName: displayName.trim() });
+    }
+
+    if (phoneNumber !== undefined) {
+      if (phoneNumber && !/^\+?[1-9]\d{1,14}$/.test(phoneNumber.replace(/[\s-]/g, ''))) {
+        return errorResponse(res, 'Invalid phone number format', 400);
+      }
+      updates.phoneNumber = phoneNumber || null;
+      if (phoneNumber) await auth.updateUser(uid, { phoneNumber });
+    }
+
+    if (bio !== undefined) {
+      if (bio && bio.length > 500) return errorResponse(res, 'Bio must be less than 500 characters', 400);
+      updates.bio = bio || null;
+    }
+
+    if (req.body.agreement !== undefined) updates.agreement = Boolean(req.body.agreement);
+
+    if (req.body.photoURL !== undefined) {
+      updates.photoURL = req.body.photoURL || null;
+      await auth.updateUser(uid, { photoURL: req.body.photoURL || null });
+    }
+
+    if (Object.keys(updates).length === 0) return errorResponse(res, 'No fields to update', 400);
+
+    updates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+    await db.collection('customers').doc(uid).update(updates);
+
+    const updatedDoc = await db.collection('customers').doc(uid).get();
+    const updatedData = updatedDoc.data();
+
+    console.log(`Profile updated successfully for: ${uid}`);
+
+    return successResponse(
+      res,
+      {
+        uid: updatedData.uid,
+        email: updatedData.email,
+        displayName: updatedData.displayName,
+        phoneNumber: updatedData.phoneNumber,
+        photoURL: updatedData.photoURL,
+        bio: updatedData.bio,
+        emailVerified: updatedData.emailVerified,
+        userType: updatedData.userType,
+      },
+      'Profile updated successfully'
+    );
+  } catch (error) {
+    console.error('Update profile error:', error);
+    return errorResponse(res, 'Failed to update profile', 500);
+  }
+};
+
+// ============================================================
+// UPLOAD PROFILE PHOTO
+// POST /auth/profile/photo
+// ============================================================
+exports.uploadProfilePhoto = async (req, res) => {
+  try {
     const uid = req.user.uid;
 
-    // Get updated user data from Firestore
+    if (!req.file) return errorResponse(res, 'No file uploaded', 400);
+
+    const file = req.file;
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+
+    if (!allowedTypes.includes(file.mimetype)) {
+      return errorResponse(res, 'Invalid file type. Only JPEG, PNG, and WebP images are allowed', 400);
+    }
+
+    if (file.size > 5 * 1024 * 1024) return errorResponse(res, 'File size must be less than 5MB', 400);
+
+    console.log(`Uploading profile photo for user: ${uid}`);
+
+    const fileName = `profile-photos/${uid}/${Date.now()}-${file.originalname}`;
+    const bucket = storage.bucket();
+    const fileUpload = bucket.file(fileName);
+
+    const blobStream = fileUpload.createWriteStream({
+      metadata: {
+        contentType: file.mimetype,
+        metadata: { firebaseStorageDownloadTokens: uid },
+      },
+    });
+
+    blobStream.on('error', (error) => {
+      console.error('Upload error:', error);
+      return errorResponse(res, 'Failed to upload photo', 500);
+    });
+
+    blobStream.on('finish', async () => {
+      try {
+        await fileUpload.makePublic();
+        const photoURL = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+
+        await db.collection('customers').doc(uid).update({ photoURL, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+        await auth.updateUser(uid, { photoURL });
+
+        console.log(`Profile photo uploaded successfully for: ${uid}`);
+        return successResponse(res, { photoURL }, 'Profile photo uploaded successfully');
+      } catch (error) {
+        console.error('Error finalizing upload:', error);
+        return errorResponse(res, 'Failed to finalize photo upload', 500);
+      }
+    });
+
+    blobStream.end(file.buffer);
+  } catch (error) {
+    console.error('Upload profile photo error:', error);
+    return errorResponse(res, 'Failed to upload profile photo', 500);
+  }
+};
+
+// ============================================================
+// REFRESH TOKEN
+// POST /auth/refresh
+// ============================================================
+exports.refreshToken = async (req, res) => {
+  try {
+    const uid = req.user.uid;
     const customerDoc = await db.collection('customers').doc(uid).get();
 
-    if (!customerDoc.exists) {
-      return errorResponse(res, 'Customer not found', 404);
-    }
+    if (!customerDoc.exists) return errorResponse(res, 'Customer not found', 404);
 
     const customerData = customerDoc.data();
+    if (customerData.isDisabled) return errorResponse(res, 'Account has been disabled', 403);
 
-    // Check if account is disabled
-    if (customerData.isDisabled) {
-      return errorResponse(res, 'Account has been disabled', 403);
-    }
-
-    // Create new custom token (optional - Firebase handles this automatically)
     const newCustomToken = await auth.createCustomToken(uid);
 
     return successResponse(
@@ -280,462 +505,79 @@ exports.refreshToken = async (req, res) => {
           displayName: customerData.displayName,
           phoneNumber: customerData.phoneNumber,
           photoURL: customerData.photoURL || null,
-          userType: 'customer'
-        }
+          userType: 'customer',
+        },
       },
       'Token refreshed successfully'
     );
-
   } catch (error) {
     console.error('Token refresh error:', error);
     return errorResponse(res, 'Failed to refresh token', 500);
   }
 };
 
-/**
- * Sign Out / Logout
- * Revoke refresh tokens and log logout activity
- */
+// ============================================================
+// SIGN OUT
+// POST /auth/signout
+// ============================================================
 exports.signOut = async (req, res) => {
   try {
     const uid = req.user.uid;
 
-    // Optional: Revoke all refresh tokens for this user
-    // This forces the user to re-authenticate on all devices
     await auth.revokeRefreshTokens(uid);
 
-    // Log logout activity in Firestore
     await db.collection('customers').doc(uid).update({
       lastLogoutAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Optional: Create logout log for security audit
     await db.collection('auth_logs').add({
       userId: uid,
       action: 'logout',
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
       userAgent: req.headers['user-agent'] || 'unknown',
-      ipAddress: req.ip || 'unknown'
+      ipAddress: req.ip || 'unknown',
     });
 
     return successResponse(res, null, 'Logged out successfully');
-
   } catch (error) {
     console.error('Logout error:', error);
     return errorResponse(res, 'Logout failed', 500);
   }
 };
 
-/**
- * Forgot Password
- * Send password reset email
- */
-exports.forgotPassword = async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    console.log(`Password reset requested for: ${email}`);
-
-    // Check if user exists
-    let userRecord;
-    try {
-      userRecord = await auth.getUserByEmail(email);
-    } catch (error) {
-      // Don't reveal if email exists or not (security best practice)
-      return successResponse(
-        res,
-        null,
-        'If an account exists with this email, a password reset link has been sent.'
-      );
-    }
-
-    // Check if user is in customers collection
-    const customerDoc = await db.collection('customers').doc(userRecord.uid).get();
-
-    if (!customerDoc.exists) {
-      // Don't reveal if email exists or not
-      return successResponse(
-        res,
-        null,
-        'If an account exists with this email, a password reset link has been sent.'
-      );
-    }
-
-    // Generate password reset link
-    const resetLink = await auth.generatePasswordResetLink(email);
-
-    // TODO: Send email with reset link
-    // For now, we'll return it (in production, send via email service)
-    console.log('Password reset link:', resetLink);
-
-    // Store reset request in Firestore for tracking
-    await db.collection('password_resets').add({
-      userId: userRecord.uid,
-      email,
-      requestedAt: admin.firestore.FieldValue.serverTimestamp(),
-      resetLink, // Don't store this in production!
-      used: false
-    });
-
-    // In development, return the link
-    if (process.env.NODE_ENV === 'development') {
-      return successResponse(
-        res,
-        { resetLink },
-        'Password reset link generated (DEV MODE)'
-      );
-    }
-
-    // In production, just confirm
-    return successResponse(
-      res,
-      null,
-      'If an account exists with this email, a password reset link has been sent.'
-    );
-
-  } catch (error) {
-    console.error('Forgot password error:', error);
-    return errorResponse(res, 'Failed to process password reset request', 500);
-  }
-};
-
-/**
- * Verify Password Reset Code
- * Check if reset code is valid
- */
-/**
- * Verify Password Reset Code
- */
-exports.verifyPasswordResetCode = async (req, res) => {
-  try {
-    const { oobCode } = req.body;
-
-    console.log('=== VERIFY RESET CODE DEBUG ===');
-    console.log('1. oobCode received:', oobCode ? 'YES' : 'NO');
-    console.log('2. oobCode length:', oobCode ? oobCode.length : 0);
-    console.log('3. oobCode preview:', oobCode ? oobCode.substring(0, 20) + '...' : 'NONE');
-
-    if (!oobCode) {
-      console.log('❌ No oobCode provided');
-      return errorResponse(res, 'Reset code is required', 400);
-    }
-
-    console.log('4. Checking if clientAuth exists:', clientAuth ? 'YES' : 'NO');
-    console.log('5. clientAuth type:', typeof clientAuth);
-
-    if (!clientAuth) {
-      console.log('❌ clientAuth is not initialized!');
-      return errorResponse(res, 'Authentication service not configured', 500);
-    }
-
-    console.log('6. Attempting to verify with Firebase...');
-
-    // Import the function if not already imported
-    const { verifyPasswordResetCode: verifyCode } = require('firebase/auth');
-
-    const email = await verifyCode(clientAuth, oobCode);
-
-    console.log('✅ Reset code valid for email:', email);
-
-    return successResponse(
-      res,
-      { email },
-      'Reset code is valid'
-    );
-
-  } catch (error) {
-    console.log('=== ERROR DETAILS ===');
-    console.log('Error code:', error.code);
-    console.log('Error message:', error.message);
-    console.log('Error name:', error.name);
-    console.log('Full error:', JSON.stringify(error, null, 2));
-    console.log('====================');
-
-    if (error.code === 'auth/invalid-action-code') {
-      return errorResponse(
-        res,
-        'Invalid reset code. The code may have expired or already been used.',
-        400
-      );
-    }
-
-    if (error.code === 'auth/expired-action-code') {
-      return errorResponse(
-        res,
-        'Reset code has expired. Please request a new password reset link.',
-        400
-      );
-    }
-
-    if (error.code === 'auth/user-not-found') {
-      return errorResponse(
-        res,
-        'User not found.',
-        404
-      );
-    }
-
-    if (error.code === 'auth/user-disabled') {
-      return errorResponse(
-        res,
-        'This account has been disabled.',
-        403
-      );
-    }
-
-    return errorResponse(
-      res,
-      'Failed to verify reset code: ' + error.message,
-      500
-    );
-  }
-};
-
-/**
- * Confirm Password Reset
- * Reset password using the code
- */
-/**
- * Confirm Password Reset
- * Using Firebase Client SDK
- */
-exports.confirmPasswordReset = async (req, res) => {
-  try {
-    const { oobCode, newPassword } = req.body;
-
-    console.log('=== CONFIRM PASSWORD RESET DEBUG ===');
-    console.log('1. oobCode received:', oobCode ? 'YES' : 'NO');
-    console.log('2. newPassword received:', newPassword ? 'YES' : 'NO');
-    console.log('3. newPassword length:', newPassword ? newPassword.length : 0);
-
-    if (!oobCode || !newPassword) {
-      console.log('❌ Missing oobCode or newPassword');
-      return errorResponse(res, 'Reset code and new password are required', 400);
-    }
-
-    if (newPassword.length < 6) {
-      console.log('❌ Password too short');
-      return errorResponse(res, 'Password must be at least 6 characters', 400);
-    }
-
-    console.log('4. Confirming password reset with Firebase Client SDK...');
-
-    // Use the imported confirmPasswordReset function from firebase/auth
-    // NOT auth.confirmPasswordReset - that doesn't exist!
-    await confirmPasswordReset(clientAuth, oobCode, newPassword);
-
-    console.log('✅ Password reset confirmed successfully');
-
-    // Optional: Update Firestore timestamp
-    try {
-      console.log('5. Updating Firestore timestamp...');
-
-      // Verify code to get email (this might fail if code is consumed)
-      const email = await verifyPasswordResetCode(clientAuth, oobCode).catch(() => null);
-
-      if (email) {
-        const userRecord = await auth.getUserByEmail(email);
-
-        await db.collection('customers').doc(userRecord.uid).update({
-          passwordChangedAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-        console.log('✅ Firestore updated');
-      } else {
-        console.log('⚠️ Could not get email (code already consumed)');
-      }
-    } catch (firestoreError) {
-      console.log('⚠️ Firestore update failed:', firestoreError.message);
-      // Don't fail the main request
-    }
-
-    console.log('6. Sending success response');
-
-    return successResponse(
-      res,
-      null,
-      'Password has been reset successfully. Please login with your new password.'
-    );
-
-  } catch (error) {
-    console.log('=== CONFIRM RESET ERROR ===');
-    console.log('Error code:', error.code);
-    console.log('Error message:', error.message);
-    console.log('===========================');
-
-    if (error.code === 'auth/invalid-action-code') {
-      return errorResponse(
-        res,
-        'Invalid or expired reset code. The code may have already been used.',
-        400
-      );
-    }
-
-    if (error.code === 'auth/expired-action-code') {
-      return errorResponse(
-        res,
-        'Reset code has expired. Please request a new password reset link.',
-        400
-      );
-    }
-
-    if (error.code === 'auth/weak-password') {
-      return errorResponse(
-        res,
-        'Password is too weak. Please use a stronger password.',
-        400
-      );
-    }
-
-    if (error.code === 'auth/user-disabled') {
-      return errorResponse(
-        res,
-        'This account has been disabled.',
-        403
-      );
-    }
-
-    return errorResponse(
-      res,
-      'Failed to reset password: ' + error.message,
-      500
-    );
-  }
-};
-
-/**
- * Send Email Verification
- * Send verification email to user
- */
-exports.sendEmailVerification = async (req, res) => {
-  try {
-    const uid = req.user.uid;
-
-    // Get user email
-    const userRecord = await auth.getUser(uid);
-
-    if (userRecord.emailVerified) {
-      return errorResponse(res, 'Email is already verified', 400);
-    }
-
-    // Generate email verification link
-    const verificationLink = await auth.generateEmailVerificationLink(userRecord.email);
-
-    // TODO: Send email with verification link
-    // For now, we'll return it (in production, send via email service)
-    console.log('Email verification link:', verificationLink);
-
-    // Store verification request
-    await db.collection('email_verifications').add({
-      userId: uid,
-      email: userRecord.email,
-      sentAt: admin.firestore.FieldValue.serverTimestamp(),
-      verified: false
-    });
-
-    // In development, return the link
-    if (process.env.NODE_ENV === 'development') {
-      return successResponse(
-        res,
-        { verificationLink },
-        'Verification link generated (DEV MODE)'
-      );
-    }
-
-    return successResponse(
-      res,
-      null,
-      'Verification email sent. Please check your inbox.'
-    );
-
-  } catch (error) {
-    console.error('Send verification error:', error);
-    return errorResponse(res, 'Failed to send verification email', 500);
-  }
-};
-
-/**
- * Check Email Verification Status
- */
-exports.checkEmailVerificationStatus = async (req, res) => {
-  try {
-    const uid = req.user.uid;
-
-    // Get latest user data from Firebase Auth
-    const userRecord = await auth.getUser(uid);
-
-    // Update Firestore if verification status changed
-    if (userRecord.emailVerified) {
-      await db.collection('customers').doc(uid).update({
-        emailVerified: true,
-        emailVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-    }
-
-    return successResponse(
-      res,
-      {
-        emailVerified: userRecord.emailVerified,
-        email: userRecord.email
-      },
-      'Email verification status retrieved'
-    );
-
-  } catch (error) {
-    console.error('Check verification error:', error);
-    return errorResponse(res, 'Failed to check verification status', 500);
-  }
-};
-
-/**
- * Google Sign-In
- * Verify Google ID token and create/login user
- */
+// ============================================================
+// GOOGLE SIGN-IN
+// POST /auth/google
+// ============================================================
 exports.googleSignIn = async (req, res) => {
   try {
     const { idToken } = req.body;
+    if (!idToken) return errorResponse(res, 'Google ID token is required', 400);
 
-    if (!idToken) {
-      return errorResponse(res, 'Google ID token is required', 400);
-    }
-
-    // Verify the Google ID token
     const decodedToken = await auth.verifyIdToken(idToken);
     const uid = decodedToken.uid;
 
     console.log(`Google sign-in for user: ${uid}`);
 
-    // Get or create user in Firebase Auth
     let userRecord;
     try {
       userRecord = await auth.getUser(uid);
-    } catch (error) {
-      // User doesn't exist, this shouldn't happen with Google Sign-In
-      // But let's handle it gracefully
+    } catch {
       return errorResponse(res, 'Invalid Google token', 401);
     }
 
-    // Check if customer exists in Firestore
     const customerDoc = await db.collection('customers').doc(uid).get();
 
     if (customerDoc.exists) {
-      // Existing user - just login
       const customerData = customerDoc.data();
+      if (customerData.isDisabled) return errorResponse(res, 'Account has been disabled', 403);
 
-      // Check if disabled
-      if (customerData.isDisabled) {
-        return errorResponse(res, 'Account has been disabled', 403);
-      }
-
-      // Update last login
       await db.collection('customers').doc(uid).update({
         lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
-      // Create custom token
       const customToken = await auth.createCustomToken(uid);
 
       return successResponse(
@@ -750,14 +592,12 @@ exports.googleSignIn = async (req, res) => {
             phoneNumber: customerData.phoneNumber || null,
             photoURL: customerData.photoURL,
             emailVerified: userRecord.emailVerified,
-            userType: 'customer'
-          }
+            userType: 'customer',
+          },
         },
         'Login successful'
       );
-
     } else {
-      // New user - create customer document
       const customerData = {
         uid,
         email: userRecord.email,
@@ -774,12 +614,10 @@ exports.googleSignIn = async (req, res) => {
         isDisabled: false,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        lastLoginAt: admin.firestore.FieldValue.serverTimestamp()
+        lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 
       await db.collection('customers').doc(uid).set(customerData);
-
-      // Create custom token
       const customToken = await auth.createCustomToken(uid);
 
       return successResponse(
@@ -794,266 +632,153 @@ exports.googleSignIn = async (req, res) => {
             phoneNumber: userRecord.phoneNumber,
             photoURL: userRecord.photoURL,
             emailVerified: userRecord.emailVerified,
-            userType: 'customer'
-          }
+            userType: 'customer',
+          },
         },
         'Account created successfully',
         201
       );
     }
-
   } catch (error) {
     console.error('Google sign-in error:', error);
-
-    if (error.code === 'auth/id-token-expired') {
-      return errorResponse(res, 'Google token has expired', 401);
-    }
-
-    if (error.code === 'auth/invalid-id-token') {
-      return errorResponse(res, 'Invalid Google token', 401);
-    }
-
+    if (error.code === 'auth/id-token-expired') return errorResponse(res, 'Google token has expired', 401);
+    if (error.code === 'auth/invalid-id-token') return errorResponse(res, 'Invalid Google token', 401);
     return errorResponse(res, 'Google sign-in failed', 500);
   }
 };
 
-/**
- * Verify Email
- * Using Firebase Client SDK
- */
-exports.verifyEmail = async (req, res) => {
+// ============================================================
+// FORGOT PASSWORD
+// POST /auth/forgot-password
+// ============================================================
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    console.log(`Password reset requested for: ${email}`);
+
+    let userRecord;
+    try {
+      userRecord = await auth.getUserByEmail(email);
+    } catch {
+      return successResponse(res, null, 'If an account exists with this email, a password reset link has been sent.');
+    }
+
+    const customerDoc = await db.collection('customers').doc(userRecord.uid).get();
+    if (!customerDoc.exists) {
+      return successResponse(res, null, 'If an account exists with this email, a password reset link has been sent.');
+    }
+
+    const resetLink = await auth.generatePasswordResetLink(email);
+    console.log('Password reset link:', resetLink);
+
+    await db.collection('password_resets').add({
+      userId: userRecord.uid,
+      email,
+      requestedAt: admin.firestore.FieldValue.serverTimestamp(),
+      used: false,
+    });
+
+    if (process.env.NODE_ENV === 'development') {
+      return successResponse(res, { resetLink }, 'Password reset link generated (DEV MODE)');
+    }
+
+    return successResponse(res, null, 'If an account exists with this email, a password reset link has been sent.');
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    return errorResponse(res, 'Failed to process password reset request', 500);
+  }
+};
+
+// ============================================================
+// VERIFY PASSWORD RESET CODE
+// POST /auth/verify-reset-code
+// ============================================================
+exports.verifyPasswordResetCode = async (req, res) => {
   try {
     const { oobCode } = req.body;
 
-    if (!oobCode) {
-      return errorResponse(res, 'Verification code is required', 400);
-    }
+    if (!oobCode) return errorResponse(res, 'Reset code is required', 400);
+    if (!clientAuth) return errorResponse(res, 'Authentication service not configured', 500);
 
-    console.log('Verifying email with code...');
+    const { verifyPasswordResetCode: verifyCode } = require('firebase/auth');
+    const email = await verifyCode(clientAuth, oobCode);
 
-    // Apply the email verification code using Client SDK
-    await applyActionCode(clientAuth, oobCode);
-
-    // Check the action code to get user info
-    const info = await checkActionCode(clientAuth, oobCode);
-    const email = info.data.email;
-
-    // Get user by email
-    const userRecord = await auth.getUserByEmail(email);
-
-    // Update customer document in Firestore
-    await db.collection('customers').doc(userRecord.uid).update({
-      emailVerified: true,
-      emailVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-
-    console.log('Email verified for:', email);
-
-    return successResponse(
-      res,
-      null,
-      'Email verified successfully!'
-    );
-
+    return successResponse(res, { email }, 'Reset code is valid');
   } catch (error) {
-    console.error('Verify email error:', error.code, error.message);
-
-    if (error.code === 'auth/invalid-action-code') {
-      return errorResponse(res, 'Invalid or expired verification code', 400);
-    }
-
-    if (error.code === 'auth/expired-action-code') {
-      return errorResponse(res, 'Verification code has expired', 400);
-    }
-
-    return errorResponse(res, 'Failed to verify email: ' + (error.message || 'Unknown error'), 500);
-  }
-};
-/**
- * Update Customer Profile
- * Update display name, phone number, and other profile fields
- */
-exports.updateProfile = async (req, res) => {
-  try {
-    const uid = req.user.uid;
-    const { displayName, phoneNumber, bio } = req.body;
-
-    console.log(`Updating profile for user: ${uid}`);
-
-    const updates = {};
-
-    // Validate and add fields to update
-    if (displayName !== undefined) {
-      if (displayName.trim().length < 2) {
-        return errorResponse(res, 'Display name must be at least 2 characters', 400);
-      }
-      updates.displayName = displayName.trim();
-
-      // Update in Firebase Auth too
-      await auth.updateUser(uid, { displayName: displayName.trim() });
-    }
-
-    if (phoneNumber !== undefined) {
-      // Validate phone number format (basic validation)
-      if (phoneNumber && !/^\+?[1-9]\d{1,14}$/.test(phoneNumber.replace(/[\s-]/g, ''))) {
-        return errorResponse(res, 'Invalid phone number format', 400);
-      }
-      updates.phoneNumber = phoneNumber || null;
-
-      // Update in Firebase Auth too
-      if (phoneNumber) {
-        await auth.updateUser(uid, { phoneNumber });
-      }
-    }
-
-    if (bio !== undefined) {
-      if (bio && bio.length > 500) {
-        return errorResponse(res, 'Bio must be less than 500 characters', 400);
-      }
-      updates.bio = bio || null;
-    }
-
-    if (req.body.agreement !== undefined) {
-      updates.agreement = Boolean(req.body.agreement);
-    }
-
-    // Allow photoURL to be updated directly (e.g. after Firebase Storage upload from the app)
-    if (req.body.photoURL !== undefined) {
-      updates.photoURL = req.body.photoURL || null;
-      // Sync to Firebase Auth as well
-      await auth.updateUser(uid, { photoURL: req.body.photoURL || null });
-    }
-
-    if (Object.keys(updates).length === 0) {
-      return errorResponse(res, 'No fields to update', 400);
-    }
-
-
-    // Add timestamp
-    updates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
-
-    // Update in Firestore
-    await db.collection('customers').doc(uid).update(updates);
-
-    // Get updated profile
-    const updatedDoc = await db.collection('customers').doc(uid).get();
-    const updatedData = updatedDoc.data();
-
-    console.log(`Profile updated successfully for: ${uid}`);
-
-    return successResponse(
-      res,
-      {
-        uid: updatedData.uid,
-        email: updatedData.email,
-        displayName: updatedData.displayName,
-        phoneNumber: updatedData.phoneNumber,
-        photoURL: updatedData.photoURL,
-        bio: updatedData.bio,
-        emailVerified: updatedData.emailVerified,
-        userType: updatedData.userType
-      },
-      'Profile updated successfully'
-    );
-
-  } catch (error) {
-    console.error('Update profile error:', error);
-    return errorResponse(res, 'Failed to update profile', 500);
+    console.error('Verify reset code error:', error.code, error.message);
+    if (error.code === 'auth/invalid-action-code') return errorResponse(res, 'Invalid reset code. The code may have expired or already been used.', 400);
+    if (error.code === 'auth/expired-action-code') return errorResponse(res, 'Reset code has expired. Please request a new password reset link.', 400);
+    if (error.code === 'auth/user-not-found') return errorResponse(res, 'User not found.', 404);
+    if (error.code === 'auth/user-disabled') return errorResponse(res, 'This account has been disabled.', 403);
+    return errorResponse(res, 'Failed to verify reset code: ' + error.message, 500);
   }
 };
 
-/**
- * Upload Profile Photo
- * Upload profile picture to Firebase Storage
- */
-exports.uploadProfilePhoto = async (req, res) => {
+// ============================================================
+// CONFIRM PASSWORD RESET
+// POST /auth/confirm-reset
+// ============================================================
+exports.confirmPasswordReset = async (req, res) => {
   try {
-    const uid = req.user.uid;
+    const { oobCode, newPassword } = req.body;
 
-    // Check if file was uploaded
-    if (!req.file) {
-      return errorResponse(res, 'No file uploaded', 400);
-    }
+    if (!oobCode || !newPassword) return errorResponse(res, 'Reset code and new password are required', 400);
+    if (newPassword.length < 6) return errorResponse(res, 'Password must be at least 6 characters', 400);
 
-    const file = req.file;
+    await confirmPasswordReset(clientAuth, oobCode, newPassword);
 
-    // Validate file type
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-    if (!allowedTypes.includes(file.mimetype)) {
-      return errorResponse(
-        res,
-        'Invalid file type. Only JPEG, PNG, and WebP images are allowed',
-        400
-      );
-    }
-
-    // Validate file size (max 5MB)
-    const maxSize = 5 * 1024 * 1024; // 5MB
-    if (file.size > maxSize) {
-      return errorResponse(res, 'File size must be less than 5MB', 400);
-    }
-
-    console.log(`Uploading profile photo for user: ${uid}`);
-
-    // Create file path in Storage
-    const fileName = `profile-photos/${uid}/${Date.now()}-${file.originalname}`;
-    const bucket = storage.bucket();
-    const fileUpload = bucket.file(fileName);
-
-    // Create write stream
-    const blobStream = fileUpload.createWriteStream({
-      metadata: {
-        contentType: file.mimetype,
-        metadata: {
-          firebaseStorageDownloadTokens: uid
-        }
-      }
-    });
-
-    // Handle upload errors
-    blobStream.on('error', (error) => {
-      console.error('Upload error:', error);
-      return errorResponse(res, 'Failed to upload photo', 500);
-    });
-
-    // Handle upload completion
-    blobStream.on('finish', async () => {
-      try {
-        // Make file publicly accessible
-        await fileUpload.makePublic();
-
-        // Get public URL
-        const photoURL = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
-
-        // Update user profile in Firestore
-        await db.collection('customers').doc(uid).update({
-          photoURL,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    try {
+      const email = await verifyPasswordResetCode(clientAuth, oobCode).catch(() => null);
+      if (email) {
+        const userRecord = await auth.getUserByEmail(email);
+        await db.collection('customers').doc(userRecord.uid).update({
+          passwordChangedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
-
-        // Update Firebase Auth profile
-        await auth.updateUser(uid, { photoURL });
-
-        console.log(`Profile photo uploaded successfully for: ${uid}`);
-
-        return successResponse(
-          res,
-          { photoURL },
-          'Profile photo uploaded successfully'
-        );
-
-      } catch (error) {
-        console.error('Error finalizing upload:', error);
-        return errorResponse(res, 'Failed to finalize photo upload', 500);
       }
+    } catch (firestoreError) {
+      console.warn('Firestore timestamp update failed (non-fatal):', firestoreError.message);
+    }
+
+    return successResponse(res, null, 'Password has been reset successfully. Please login with your new password.');
+  } catch (error) {
+    console.error('Confirm password reset error:', error.code, error.message);
+    if (error.code === 'auth/invalid-action-code') return errorResponse(res, 'Invalid or expired reset code.', 400);
+    if (error.code === 'auth/expired-action-code') return errorResponse(res, 'Reset code has expired.', 400);
+    if (error.code === 'auth/weak-password') return errorResponse(res, 'Password is too weak.', 400);
+    if (error.code === 'auth/user-disabled') return errorResponse(res, 'This account has been disabled.', 403);
+    return errorResponse(res, 'Failed to reset password: ' + error.message, 500);
+  }
+};
+
+// ============================================================
+// SEND EMAIL VERIFICATION LINK (Firebase-generated link)
+// POST /auth/send-email-verification-link
+// ============================================================
+exports.sendEmailVerificationLink = async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const userRecord = await auth.getUser(uid);
+
+    if (userRecord.emailVerified) return errorResponse(res, 'Email is already verified', 400);
+
+    const verificationLink = await auth.generateEmailVerificationLink(userRecord.email);
+    console.log('Email verification link:', verificationLink);
+
+    await db.collection('email_verifications').add({
+      userId: uid,
+      email: userRecord.email,
+      sentAt: admin.firestore.FieldValue.serverTimestamp(),
+      verified: false,
     });
 
-    // Write file to stream
-    blobStream.end(file.buffer);
+    if (process.env.NODE_ENV === 'development') {
+      return successResponse(res, { verificationLink }, 'Verification link generated (DEV MODE)');
+    }
 
+    return successResponse(res, null, 'Verification email sent. Please check your inbox.');
   } catch (error) {
-    console.error('Upload profile photo error:', error);
-    return errorResponse(res, 'Failed to upload profile photo', 500);
+    console.error('Send verification error:', error);
+    return errorResponse(res, 'Failed to send verification email', 500);
   }
 };
