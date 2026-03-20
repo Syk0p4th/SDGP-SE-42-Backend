@@ -60,7 +60,9 @@ router.get('/auth/check-email-verification', verifyToken, customerAuthController
 // ─── Profile ──────────────────────────────────────────────────────────────────
 router.get('/profile', verifyToken, customerAuthController.getProfile);
 router.put('/profile', verifyToken, updateProfileValidationRules, validate, customerAuthController.updateProfile);
+router.patch('/profile', verifyToken, customerAuthController.updateProfile);  // alias for partial updates (e.g. photoURL)
 router.post('/profile/photo', verifyToken, upload.single('photo'), customerAuthController.uploadProfilePhoto);
+
 
 // ─── Addresses ────────────────────────────────────────────────────────────────
 router.get('/addresses', verifyToken, customerProfileController.getAddresses);

@@ -918,9 +918,17 @@ exports.updateProfile = async (req, res) => {
       updates.agreement = Boolean(req.body.agreement);
     }
 
+    // Allow photoURL to be updated directly (e.g. after Firebase Storage upload from the app)
+    if (req.body.photoURL !== undefined) {
+      updates.photoURL = req.body.photoURL || null;
+      // Sync to Firebase Auth as well
+      await auth.updateUser(uid, { photoURL: req.body.photoURL || null });
+    }
+
     if (Object.keys(updates).length === 0) {
       return errorResponse(res, 'No fields to update', 400);
     }
+
 
     // Add timestamp
     updates.updatedAt = admin.firestore.FieldValue.serverTimestamp();

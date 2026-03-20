@@ -566,6 +566,11 @@ exports.updateProfile = async (req, res) => {
     if (serviceAreas) updates.serviceAreas = serviceAreas;
     if (workingHours) updates.workingHours = workingHours;
     if (req.body.agreement !== undefined) updates.agreement = Boolean(req.body.agreement);
+    if (req.body.photoURL !== undefined) {
+      updates.photoURL = req.body.photoURL || null;
+      await getAuth().updateUser(uid, { photoURL: req.body.photoURL || null });
+    }
+
 
     await getDb().collection(COLLECTIONS.PROVIDERS).doc(uid).update(updates);
 
