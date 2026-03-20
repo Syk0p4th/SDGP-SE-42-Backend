@@ -22,6 +22,7 @@ const BOOKING_STATUS = {
   REJECTED: 'rejected'
 };
 
+
 const ROLES = {
   CUSTOMER: 'customer',
   STAFF: 'staff',
@@ -79,7 +80,7 @@ function calculatePrice(basePrice, vehicleType) {
 // ============================================================
 exports.createBooking = asyncHandler(async (req, res) => {
   try {
-    const { serviceId, vehicleId, scheduledDate, scheduledTime, addressId, notes } = req.body;
+    const { serviceId, vehicleId, scheduledDate, scheduledTime, addressId, notes, paymentPath } = req.body;
     const { uid } = req.user;
 
     // --- Validate required fields ---
@@ -141,12 +142,19 @@ exports.createBooking = asyncHandler(async (req, res) => {
       subscription = subscriptionDoc.data();
       subscriptionId = subscriptionDoc.id;
 
-      if (subscription.remainingWashes <= 0) {
-        return errorResponse(
-          res,
-          'No remaining washes in your subscription. Please renew or book without subscription.',
-          400
-        );
+      // Only validate subscription if customer chose to pay with it
+      if (paymentPath === 'subscription') {
+        if (subscription.remainingWashes <= 0) {
+          return errorResponse(
+            res,
+            'No remaining washes in your subscription. Please renew or book without subscription.',
+            400
+          );
+        }
+      } else {
+        // one_time — ignore subscription entirely
+        subscription = null;
+        subscriptionId = null;
       }
     }
 
