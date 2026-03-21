@@ -64,6 +64,26 @@ const startServer = (port) => {
   const server = app.listen(port, '0.0.0.0', () => {
     console.log(`\n🚀 Server running on port ${port}`);
     console.log(`📍 Health: http://localhost:${port}/health`);
+    // Temporary debug — remove after fixing
+    app.post('/api/customer/auth/test', (req, res) => {
+      res.json({ success: true, body: req.body, message: 'Test route works' });
+    });
+
+    app.get('/api/customer/routes', (req, res) => {
+      const routes = [];
+      app._router.stack.forEach(middleware => {
+        if (middleware.route) {
+          routes.push(middleware.route.path);
+        } else if (middleware.name === 'router') {
+          middleware.handle.stack.forEach(handler => {
+            if (handler.route) {
+              routes.push(handler.route.path);
+            }
+          });
+        }
+      });
+      res.json({ routes });
+    });
     console.log(`📍 Signup: POST http://localhost:${port}/api/customer/auth/signup`);
     console.log(`📍 Login: POST http://localhost:${port}/api/customer/auth/signin\n`);
   });

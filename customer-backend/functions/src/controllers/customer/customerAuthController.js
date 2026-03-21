@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const { admin, db, auth } = require('../../config/firebase');
-const { clientAuth } = require('../../config/firebaseclient');
+const { clientAuth } = require('../../config/firebaseClient');
 const {
   verifyPasswordResetCode,
   confirmPasswordReset,
