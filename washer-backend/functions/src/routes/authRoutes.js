@@ -33,7 +33,5 @@ router.post('/create-staff', authenticate, isAdmin, authController.createStaff);
 router.post('/disable/:uid', authenticate, isAdmin, authController.disableUser);
 router.post('/enable/:uid', authenticate, isAdmin, authController.enableUser);
 
-//Email verification
-router.post('/auth/send-verification-email', verifyToken, authController.sendVerificationEmail);
-router.post('/auth/verify-email', authController.verifyEmail);
+
 module.exports = router;

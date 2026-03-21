@@ -2,7 +2,6 @@
 const { db } = require('../config/firebase');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
 const { AppError, asyncHandler } = require('../middleware/errorHandler');
 const { ROLES, USER_STATUS, WASHER_STATUS, COLLECTIONS } = require('../utils/constants');
 const logger = require('../config/logger');
@@ -10,142 +9,6 @@ const logger = require('../config/logger');
 const getAuth = () => admin.auth();
 const getDb = () => db;
 
-// ── Email transporter ─────────────────────────────────────────────────────────
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS, // use Gmail App Password if 2FA enabled
-  },
-});
-
-/**
- * Send verification email with OTP
- * POST /auth/send-verification-email
- * Body: { email }
- */
-exports.sendVerificationEmail = async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ success: false, message: 'Email is required' });
-
-    const code = crypto.randomInt(100000, 999999).toString();
-    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
-
-    await getDb().collection('email_verifications').doc(email).set({
-      code,
-      expiresAt,
-      attempts: 0,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-
-    await transporter.sendMail({
-      from: `"WashXpress" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: 'Your WashXpress Washer Verification Code',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #0d1629; border-radius: 16px;">
-          <div style="text-align: center; margin-bottom: 24px;">
-            <h1 style="color: #fff; font-size: 24px; margin: 0;">WashXpress</h1>
-            <p style="color: #64748b; margin: 4px 0 0;">Washer Portal</p>
-          </div>
-          <div style="background: #1e2d4a; border-radius: 12px; padding: 32px; text-align: center; border: 1px solid rgba(255,255,255,0.06);">
-            <h2 style="color: #fff; margin-bottom: 8px;">Verify your email</h2>
-            <p style="color: #94a3b8; margin-bottom: 24px;">Enter this code in the app to verify your washer account.</p>
-            <div style="background: rgba(37,99,235,0.2); border-radius: 12px; padding: 20px; margin-bottom: 24px; border: 1px solid rgba(37,99,235,0.4);">
-              <span style="font-size: 40px; font-weight: 800; color: #60a5fa; letter-spacing: 8px;">${code}</span>
-            </div>
-            <p style="color: #64748b; font-size: 13px;">This code expires in <strong style="color: #94a3b8;">10 minutes</strong>.</p>
-            <p style="color: #64748b; font-size: 13px;">If you didn't request this, you can safely ignore this email.</p>
-          </div>
-          <p style="text-align: center; color: #374151; font-size: 12px; margin-top: 24px;">© 2025 WashXpress · Sri Lanka</p>
-        </div>
-      `,
-    });
-
-    logger.info('Verification email sent', { email });
-    return res.status(200).json({ success: true, message: 'Verification code sent to your email.' });
-
-  } catch (error) {
-    console.error('Send verification email error:', error);
-    return res.status(500).json({ success: false, message: 'Failed to send verification email.' });
-  }
-};
-
-/**
- * Verify email OTP code
- * POST /auth/verify-email
- * Body: { email, code }
- */
-exports.verifyEmail = async (req, res) => {
-  try {
-    const { email, code } = req.body;
-    if (!email || !code) {
-      return res.status(400).json({ success: false, message: 'Email and code are required' });
-    }
-
-    const verDoc = await getDb().collection('email_verifications').doc(email).get();
-    if (!verDoc.exists) {
-      return res.status(400).json({
-        success: false,
-        message: 'No verification code found. Please request a new one.',
-      });
-    }
-
-    const data = verDoc.data();
-
-    if (data.attempts >= 5) {
-      await getDb().collection('email_verifications').doc(email).delete();
-      return res.status(400).json({ success: false, message: 'Too many attempts. Please request a new code.' });
-    }
-
-    if (Date.now() > data.expiresAt) {
-      await getDb().collection('email_verifications').doc(email).delete();
-      return res.status(400).json({ success: false, message: 'Code has expired. Please request a new one.' });
-    }
-
-    if (data.code !== code) {
-      await getDb().collection('email_verifications').doc(email).update({
-        attempts: admin.firestore.FieldValue.increment(1),
-      });
-      return res.status(400).json({ success: false, message: 'Incorrect code. Please try again.' });
-    }
-
-    // ✅ Correct — clean up
-    await getDb().collection('email_verifications').doc(email).delete();
-
-    // Mark provider as email verified
-    const providersSnap = await getDb()
-      .collection(COLLECTIONS.PROVIDERS)
-      .where('email', '==', email)
-      .limit(1)
-      .get();
-
-    if (!providersSnap.empty) {
-      await providersSnap.docs[0].ref.update({
-        emailVerified: true,
-        emailVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: new Date().toISOString(),
-      });
-    }
-
-    // Update Firebase Auth emailVerified flag
-    try {
-      const userRecord = await getAuth().getUserByEmail(email);
-      await getAuth().updateUser(userRecord.uid, { emailVerified: true });
-      logger.info('Firebase Auth emailVerified updated', { email, uid: userRecord.uid });
-    } catch (authErr) {
-      logger.warn('Failed to update Firebase Auth emailVerified (non-fatal)', { email, error: authErr.message });
-    }
-
-    logger.info('Email verified successfully', { email });
-    return res.status(200).json({ success: true, message: 'Email verified successfully.' });
-
-  } catch (error) {
-    console.error('Verify email error:', error);
-    return res.status(500).json({ success: false, message: 'Verification failed.' });
-  }
-};
 
 /**
  * Register a new washer
@@ -332,8 +195,25 @@ exports.loginWasher = asyncHandler(async (req, res) => {
   const providerData = providerDoc.data();
   if (providerData.role !== ROLES.WASHER) throw new AppError('This endpoint is only for washer accounts', 403, 'INVALID_ROLE');
 
-  const customToken = await getAuth().createCustomToken(userRecord.uid, { role: providerData.role, washerStatus: providerData.washerStatus });
-  await getDb().collection(COLLECTIONS.PROVIDERS).doc(userRecord.uid).update({ lastLoginAt: new Date().toISOString() });
+  const customToken = await getAuth().createCustomToken(userRecord.uid, {
+    role: providerData.role,
+    washerStatus: providerData.washerStatus,
+  });
+
+  // ── Sync emailVerified from Firebase Auth → Firestore ─────────────────────
+  const updatePayload = {
+    lastLoginAt: new Date().toISOString(),
+  };
+
+  if (userRecord.emailVerified && !providerData.emailVerified) {
+    updatePayload.emailVerified   = true;
+    updatePayload.emailVerifiedAt = new Date().toISOString();
+    updatePayload.updatedAt       = new Date().toISOString();
+    logger.info('Email verified synced to Firestore for washer', { uid: userRecord.uid, email });
+  }
+
+  await getDb().collection(COLLECTIONS.PROVIDERS).doc(userRecord.uid).update(updatePayload);
+  // ─────────────────────────────────────────────────────────────────────────
 
   logger.logAuth('login_washer', userRecord.uid, true);
 
@@ -341,7 +221,18 @@ exports.loginWasher = asyncHandler(async (req, res) => {
     success: true,
     data: {
       token: customToken,
-      user: { uid: userRecord.uid, email: providerData.email, displayName: providerData.displayName, washerStatus: providerData.washerStatus, certificationStatus: providerData.certificationStatus, isActive: providerData.isActive, isVerified: providerData.isVerified, experience: providerData.experience || 0, rating: providerData.rating || 0 },
+      user: {
+        uid:               userRecord.uid,
+        email:             providerData.email,
+        displayName:       providerData.displayName,
+        washerStatus:      providerData.washerStatus,
+        certificationStatus: providerData.certificationStatus,
+        isActive:          providerData.isActive,
+        isVerified:        providerData.isVerified,
+        emailVerified:     userRecord.emailVerified, // always use Firebase Auth as source of truth
+        experience:        providerData.experience || 0,
+        rating:            providerData.rating || 0,
+      },
     },
   });
 });

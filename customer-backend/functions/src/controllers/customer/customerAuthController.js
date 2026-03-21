@@ -1,5 +1,4 @@
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
 const { admin, db, auth } = require('../../config/firebase');
 const { clientAuth } = require('../../config/firebaseclient');
 const {
@@ -11,14 +10,6 @@ const {
 const { successResponse, errorResponse } = require('../../utils/response');
 const { handleAuthError } = require('../../utils/errorHandling');
 
-// ── Email transporter ─────────────────────────────────────────────────────────
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS, // use Gmail App Password if 2FA enabled
-  },
-});
 
 // ============================================================
 // SIGN IN
@@ -52,24 +43,34 @@ exports.signIn = async (req, res) => {
 
     const customToken = await auth.createCustomToken(userRecord.uid);
 
-    await db.collection('customers').doc(userRecord.uid).update({
+    // ── Sync emailVerified from Firebase Auth → Firestore ─────────────────
+    const updatePayload = {
       lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+      updatedAt:   admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (userRecord.emailVerified && !customerData.emailVerified) {
+      updatePayload.emailVerified    = true;
+      updatePayload.emailVerifiedAt  = admin.firestore.FieldValue.serverTimestamp();
+      console.log(`Email verified synced to Firestore for: ${email}`);
+    }
+
+    await db.collection('customers').doc(userRecord.uid).update(updatePayload);
+    // ─────────────────────────────────────────────────────────────────────
 
     return successResponse(
       res,
       {
         token: customToken,
         user: {
-          uid: userRecord.uid,
-          email: customerData.email,
-          displayName: customerData.displayName,
-          phoneNumber: customerData.phoneNumber,
-          photoURL: customerData.photoURL || null,
-          emailVerified: userRecord.emailVerified,
-          userType: 'customer',
-          createdAt: customerData.createdAt,
+          uid:           userRecord.uid,
+          email:         customerData.email,
+          displayName:   customerData.displayName,
+          phoneNumber:   customerData.phoneNumber,
+          photoURL:      customerData.photoURL || null,
+          emailVerified: userRecord.emailVerified, // always use Firebase Auth as source of truth
+          userType:      'customer',
+          createdAt:     customerData.createdAt,
         },
       },
       'Login successful',
@@ -151,141 +152,6 @@ exports.signUp = async (req, res) => {
     if (error.code === 'auth/invalid-email') return errorResponse(res, 'Invalid email address', 400);
     if (error.code === 'auth/weak-password') return errorResponse(res, 'Password is too weak', 400);
     return errorResponse(res, 'Signup failed. Please try again.', 500);
-  }
-};
-
-// ============================================================
-// SEND VERIFICATION EMAIL — OTP via Nodemailer
-// POST /auth/send-verification-email
-// Body: { email }
-// No auth required — called during signup before user is logged in
-// ============================================================
-exports.sendVerificationEmail = async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ success: false, message: 'Email is required' });
-
-    // Generate 6-digit OTP
-    const code = crypto.randomInt(100000, 999999).toString();
-    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
-
-    // Store in Firestore
-    await db.collection('email_verifications').doc(email).set({
-      code,
-      expiresAt,
-      attempts: 0,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-
-    // Send email
-    await transporter.sendMail({
-      from: `"WashXpress" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: 'Your WashXpress Verification Code',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #f8fafc; border-radius: 16px;">
-          <div style="text-align: center; margin-bottom: 24px;">
-            <h1 style="color: #0d1629; font-size: 24px; margin: 0;">WashXpress</h1>
-          </div>
-          <div style="background: #fff; border-radius: 12px; padding: 32px; text-align: center;">
-            <h2 style="color: #0d1629; margin-bottom: 8px;">Verify your email</h2>
-            <p style="color: #64748b; margin-bottom: 24px;">Enter this code in the app to verify your email address.</p>
-            <div style="background: #eff6ff; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
-              <span style="font-size: 40px; font-weight: 800; color: #0ca6e8; letter-spacing: 8px;">${code}</span>
-            </div>
-            <p style="color: #94a3b8; font-size: 13px;">This code expires in <strong>10 minutes</strong>.</p>
-            <p style="color: #94a3b8; font-size: 13px;">If you didn't request this, you can safely ignore this email.</p>
-          </div>
-          <p style="text-align: center; color: #cbd5e1; font-size: 12px; margin-top: 24px;">© 2025 WashXpress · Sri Lanka</p>
-        </div>
-      `,
-    });
-
-    console.log(`Verification email sent to: ${email}`);
-    return res.status(200).json({ success: true, message: 'Verification code sent to your email.' });
-
-  } catch (error) {
-    console.error('Send verification email error:', error);
-    return res.status(500).json({ success: false, message: 'Failed to send verification email.' });
-  }
-};
-
-// ============================================================
-// VERIFY EMAIL — OTP code (matches sendVerificationEmail above)
-// POST /auth/verify-email
-// Body: { email, code }
-// No auth required — called during signup before user is logged in
-// ============================================================
-exports.verifyEmail = async (req, res) => {
-  try {
-    const { email, code } = req.body;
-    if (!email || !code) {
-      return res.status(400).json({ success: false, message: 'Email and code are required' });
-    }
-
-    const verDoc = await db.collection('email_verifications').doc(email).get();
-    if (!verDoc.exists) {
-      return res.status(400).json({
-        success: false,
-        message: 'No verification code found. Please request a new one.',
-      });
-    }
-
-    const data = verDoc.data();
-
-    // Too many attempts
-    if (data.attempts >= 5) {
-      await db.collection('email_verifications').doc(email).delete();
-      return res.status(400).json({
-        success: false,
-        message: 'Too many attempts. Please request a new code.',
-      });
-    }
-
-    // Expired
-    if (Date.now() > data.expiresAt) {
-      await db.collection('email_verifications').doc(email).delete();
-      return res.status(400).json({
-        success: false,
-        message: 'Code has expired. Please request a new one.',
-      });
-    }
-
-    // Wrong code — increment attempts
-    if (data.code !== code) {
-      await db.collection('email_verifications').doc(email).update({
-        attempts: admin.firestore.FieldValue.increment(1),
-      });
-      return res.status(400).json({ success: false, message: 'Incorrect code. Please try again.' });
-    }
-
-    // ✅ Correct — clean up verification doc
-    await db.collection('email_verifications').doc(email).delete();
-
-    // Mark customer as email verified in Firestore
-    const usersSnap = await db.collection('customers').where('email', '==', email).limit(1).get();
-    if (!usersSnap.empty) {
-      await usersSnap.docs[0].ref.update({
-        emailVerified: true,
-        emailVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-    }
-
-    // Also update Firebase Auth emailVerified flag (best effort)
-    try {
-      const userRecord = await admin.auth().getUserByEmail(email);
-      await admin.auth().updateUser(userRecord.uid, { emailVerified: true });
-      console.log(`Firebase Auth emailVerified updated for: ${email}`);
-    } catch (authErr) {
-      console.warn('Failed to update Firebase Auth emailVerified (non-fatal):', authErr.message);
-    }
-
-    return res.status(200).json({ success: true, message: 'Email verified successfully.' });
-
-  } catch (error) {
-    console.error('Verify email error:', error);
-    return res.status(500).json({ success: false, message: 'Verification failed.' });
   }
 };
 

@@ -19,7 +19,6 @@ const {
   forgotPasswordValidationRules,
   resetPasswordValidationRules,
   verifyResetCodeValidationRules,
-  verifyEmailValidationRules,
   googleSignInValidationRules,
   updateProfileValidationRules,
   addressValidationRules,
@@ -46,7 +45,6 @@ router.post('/auth/google', googleSignInValidationRules, validate, customerAuthC
 router.post('/auth/forgot-password', forgotPasswordValidationRules, validate, customerAuthController.forgotPassword);
 router.post('/auth/verify-reset-code', verifyResetCodeValidationRules, validate, customerAuthController.verifyPasswordResetCode);
 router.post('/auth/confirm-password-reset', resetPasswordValidationRules, validate, customerAuthController.confirmPasswordReset);
-router.post('/auth/verify-email', verifyEmailValidationRules, validate, customerAuthController.verifyEmail);
 
 // ─── Internal / Cron (NO auth) ────────────────────────────────────────────────
 router.post('/subscriptions/expire-check', customerSubscriptionController.expireSubscriptions);
@@ -54,7 +52,6 @@ router.post('/subscriptions/expire-check', customerSubscriptionController.expire
 // ─── Auth (protected) ─────────────────────────────────────────────────────────
 router.post('/auth/refresh-token', verifyToken, customerAuthController.refreshToken);
 router.post('/auth/signout', verifyToken, customerAuthController.signOut);
-router.post('/auth/send-verification-email', verifyToken, customerAuthController.sendEmailVerification);
 router.get('/auth/check-email-verification', verifyToken, customerAuthController.checkEmailVerificationStatus);
 
 // ─── Profile ──────────────────────────────────────────────────────────────────
@@ -125,7 +122,5 @@ router.post('/complaints', verifyToken, customerComplaintController.createCompla
 router.get('/complaints', verifyToken, customerComplaintController.getMyComplaints);
 router.get('/complaints/:complaintId', verifyToken, customerComplaintController.getComplaintById);
 
-//Email verification
-router.post('/auth/send-verification-email', verifyToken, customerAuthController.sendVerificationEmail);
-router.post('/auth/verify-email', customerAuthController.verifyEmail);
+
 module.exports = router;
